@@ -181,7 +181,7 @@ export const add = mutation({
     }
   }, 60000);
 
-  it.skip('should attempt to run convex CLI --help (blocked by dynamic imports)', async () => {
+  it('should attempt to run convex CLI --help', async () => {
     const result = await pm.install('convex', {});
     expect(result.added).toContain('convex');
 

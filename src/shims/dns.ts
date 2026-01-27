@@ -102,6 +102,21 @@ export function getServers(): string[] {
   return [];
 }
 
+/**
+ * Set default result order - no-op in browser
+ * Order can be 'ipv4first', 'ipv6first', or 'verbatim'
+ */
+export function setDefaultResultOrder(_order: string): void {
+  // No-op in browser
+}
+
+/**
+ * Get default result order
+ */
+export function getDefaultResultOrder(): string {
+  return 'verbatim';
+}
+
 // Promises API
 export const promises = {
   lookup: (hostname: string, options?: { family?: number; all?: boolean }) => {
@@ -148,6 +163,8 @@ export default {
   reverse,
   setServers,
   getServers,
+  setDefaultResultOrder,
+  getDefaultResultOrder,
   promises,
   ADDRCONFIG,
   V4MAPPED,

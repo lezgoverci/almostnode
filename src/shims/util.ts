@@ -279,6 +279,10 @@ export const types = {
   isBuffer,
 };
 
+// Re-export TextEncoder and TextDecoder from global
+export const TextEncoder = globalThis.TextEncoder;
+export const TextDecoder = globalThis.TextDecoder;
+
 export default {
   format,
   inspect,
@@ -303,4 +307,6 @@ export default {
   isPrimitive,
   isBuffer,
   types,
+  TextEncoder,
+  TextDecoder,
 };

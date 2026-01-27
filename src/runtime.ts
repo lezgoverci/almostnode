@@ -46,7 +46,147 @@ import * as inspectorShim from './shims/inspector';
 import * as asyncHooksShim from './shims/async_hooks';
 import * as domainShim from './shims/domain';
 import * as diagnosticsChannelShim from './shims/diagnostics_channel';
+import * as sentryShim from './shims/sentry';
 import { resolve as resolveExports } from 'resolve.exports';
+
+/**
+ * Transform dynamic imports in code: import('x') -> __dynamicImport('x')
+ * This allows dynamic imports to work in our eval-based runtime
+ */
+function transformDynamicImports(code: string): string {
+  // Use a regex that matches import( but not things like:
+  // - "import(" in strings
+  // - // import( in comments
+  // This is a simple approach that works for most bundled code
+  // For a more robust solution, we'd need a proper parser
+
+  // Match: import( with optional whitespace, not preceded by word char or $
+  // This handles: import('x'), import ("x"), await import('x'), etc.
+  return code.replace(/(?<![.$\w])import\s*\(/g, '__dynamicImport(');
+}
+
+/**
+ * Simple synchronous ESM to CJS transform
+ * Handles basic import/export syntax without needing esbuild
+ */
+function transformEsmToCjs(code: string, filename: string): string {
+  // Check if code has ESM syntax
+  const hasImport = /\bimport\s+[\w{*'"]/m.test(code);
+  const hasExport = /\bexport\s+(?:default|const|let|var|function|class|{|\*)/m.test(code);
+  const hasImportMeta = /\bimport\.meta\b/.test(code);
+
+  if (!hasImport && !hasExport && !hasImportMeta) {
+    return code; // Already CJS or no module syntax
+  }
+
+  let transformed = code;
+
+  // Transform import.meta.url to a file:// URL
+  transformed = transformed.replace(/\bimport\.meta\.url\b/g, `"file://${filename}"`);
+  transformed = transformed.replace(/\bimport\.meta\.dirname\b/g, `"${pathShim.dirname(filename)}"`);
+  transformed = transformed.replace(/\bimport\.meta\.filename\b/g, `"${filename}"`);
+  transformed = transformed.replace(/\bimport\.meta\b/g, `({ url: "file://${filename}", dirname: "${pathShim.dirname(filename)}", filename: "${filename}" })`);
+
+  // Transform named imports: import { a, b } from 'x' -> const { a, b } = require('x')
+  transformed = transformed.replace(
+    /\bimport\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    (_, imports, module) => {
+      const cleanImports = imports.replace(/\s+as\s+/g, ': ');
+      return `const {${cleanImports}} = require("${module}");`;
+    }
+  );
+
+  // Transform default imports: import x from 'y' -> const x = require('y').default || require('y')
+  transformed = transformed.replace(
+    /\bimport\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    (_, name, module) => {
+      return `const ${name} = (function() { const m = require("${module}"); return m && m.__esModule ? m.default : m; })();`;
+    }
+  );
+
+  // Transform namespace imports: import * as x from 'y' -> const x = require('y')
+  transformed = transformed.replace(
+    /\bimport\s+\*\s+as\s+(\w+)\s+from\s+['"]([^'"]+)['"]\s*;?/g,
+    'const $1 = require("$2");'
+  );
+
+  // Transform side-effect imports: import 'x' -> require('x')
+  transformed = transformed.replace(
+    /\bimport\s+['"]([^'"]+)['"]\s*;?/g,
+    'require("$1");'
+  );
+
+  // Transform export default: export default x -> module.exports.default = x; module.exports = x
+  transformed = transformed.replace(
+    /\bexport\s+default\s+/g,
+    'module.exports = module.exports.default = '
+  );
+
+  // Transform named exports: export { a, b } -> module.exports.a = a; module.exports.b = b
+  transformed = transformed.replace(
+    /\bexport\s+\{([^}]+)\}\s*;?/g,
+    (_, exports) => {
+      const items = exports.split(',').map((item: string) => {
+        const [local, exported] = item.trim().split(/\s+as\s+/);
+        const exportName = exported || local;
+        return `module.exports.${exportName.trim()} = ${local.trim()};`;
+      });
+      return items.join('\n');
+    }
+  );
+
+  // Transform export const/let/var: export const x = 1 -> const x = 1; module.exports.x = x
+  transformed = transformed.replace(
+    /\bexport\s+(const|let|var)\s+(\w+)\s*=/g,
+    '$1 $2 = module.exports.$2 ='
+  );
+
+  // Transform export function: export function x() {} -> function x() {} module.exports.x = x
+  transformed = transformed.replace(
+    /\bexport\s+function\s+(\w+)/g,
+    'function $1'
+  );
+
+  // Transform export class: export class X {} -> class X {} module.exports.X = X
+  transformed = transformed.replace(
+    /\bexport\s+class\s+(\w+)/g,
+    'class $1'
+  );
+
+  // Mark as ES module for interop
+  if (hasExport) {
+    transformed = 'Object.defineProperty(exports, "__esModule", { value: true });\n' + transformed;
+  }
+
+  return transformed;
+}
+
+/**
+ * Create a dynamic import function for a module context
+ * Returns a function that wraps require() in a Promise
+ */
+function createDynamicImport(moduleRequire: RequireFunction): (specifier: string) => Promise<unknown> {
+  return async (specifier: string): Promise<unknown> => {
+    try {
+      const mod = moduleRequire(specifier);
+
+      // If the module has a default export or is already ESM-like, return as-is
+      if (mod && typeof mod === 'object' && ('default' in (mod as object) || '__esModule' in (mod as object))) {
+        return mod;
+      }
+
+      // For CommonJS modules, wrap in an object with default export
+      // This matches how dynamic import() handles CJS modules
+      return {
+        default: mod,
+        ...(mod && typeof mod === 'object' ? mod as object : {}),
+      };
+    } catch (error) {
+      // Re-throw as a rejected promise (which is what dynamic import does)
+      throw error;
+    }
+  };
+}
 
 export interface Module {
   id: string;
@@ -143,12 +283,46 @@ function createTimersModule() {
 }
 
 /**
+ * Minimal prettier shim - just returns input unchanged
+ * This is needed because prettier uses createRequire which conflicts with our runtime
+ */
+const prettierShim = {
+  format: (source: string, _options?: unknown) => Promise.resolve(source),
+  formatWithCursor: (source: string, _options?: unknown) => Promise.resolve({ formatted: source, cursorOffset: 0 }),
+  check: (_source: string, _options?: unknown) => Promise.resolve(true),
+  resolveConfig: () => Promise.resolve(null),
+  resolveConfigFile: () => Promise.resolve(null),
+  clearConfigCache: () => {},
+  getFileInfo: () => Promise.resolve({ ignored: false, inferredParser: null }),
+  getSupportInfo: () => Promise.resolve({ languages: [], options: [] }),
+  version: '3.0.0',
+  doc: {
+    builders: {},
+    printer: {},
+    utils: {},
+  },
+};
+
+/**
+ * Create a mutable copy of a module for packages that need to patch it
+ * (e.g., Sentry needs to patch http.request/http.get)
+ */
+function makeMutable(mod: Record<string, unknown>): Record<string, unknown> {
+  const mutable: Record<string, unknown> = {};
+  for (const key of Object.keys(mod)) {
+    mutable[key] = mod[key];
+  }
+  return mutable;
+}
+
+/**
  * Built-in modules registry
  */
 const builtinModules: Record<string, unknown> = {
   path: pathShim,
-  http: httpShim,
-  https: httpsShim, // Separate https shim with https protocol default
+  // Make http/https mutable so packages like Sentry can patch them
+  http: makeMutable(httpShim as unknown as Record<string, unknown>),
+  https: makeMutable(httpsShim as unknown as Record<string, unknown>),
   net: netShim,
   events: eventsShim,
   stream: streamShim,
@@ -190,6 +364,15 @@ const builtinModules: Record<string, unknown> = {
   async_hooks: asyncHooksShim,
   domain: domainShim,
   diagnostics_channel: diagnosticsChannelShim,
+  // prettier uses createRequire which doesn't work in our runtime, so we shim it
+  prettier: prettierShim,
+  // Some packages explicitly require 'console'
+  console: console,
+  // util/types is accessed as a subpath
+  'util/types': utilShim.types,
+  // Sentry SDK (no-op since error tracking isn't useful in browser runtime)
+  '@sentry/node': sentryShim,
+  '@sentry/core': sentryShim,
 };
 
 /**
@@ -368,9 +551,28 @@ function createRequire(
     }
 
     // Read and execute JS file
-    // Note: ESM packages are pre-transformed to CJS during npm install
-    const code = vfs.readFileSync(resolvedPath, 'utf8');
+    let code = vfs.readFileSync(resolvedPath, 'utf8');
     const dirname = pathShim.dirname(resolvedPath);
+
+    // Transform ESM to CJS if needed (for .mjs files or ESM that wasn't pre-transformed)
+    // This handles files that weren't transformed during npm install
+    // BUT skip .cjs files and already-bundled CJS code
+    const isCjsFile = resolvedPath.endsWith('.cjs');
+    const isAlreadyBundledCjs = code.startsWith('"use strict";\nvar __') ||
+                                 code.startsWith("'use strict';\nvar __");
+
+    const hasEsmImport = /\bimport\s+[\w{*'"]/m.test(code);
+    const hasEsmExport = /\bexport\s+(?:default|const|let|var|function|class|{|\*)/m.test(code);
+
+    if (!isCjsFile && !isAlreadyBundledCjs) {
+      if (resolvedPath.endsWith('.mjs') || resolvedPath.includes('/esm/') || hasEsmImport || hasEsmExport) {
+        code = transformEsmToCjs(code, resolvedPath);
+      }
+    }
+
+    // Transform dynamic imports: import('x') -> __dynamicImport('x')
+    // This allows dynamic imports to work in our eval-based runtime
+    code = transformDynamicImports(code);
 
     // Create require for this module
     const moduleRequire = createRequire(
@@ -393,7 +595,7 @@ function createRequire(
     // - import.meta is provided for ESM code that uses it
     try {
       const importMetaUrl = 'file://' + resolvedPath;
-      const wrappedCode = `(function($exports, $require, $module, $filename, $dirname, $process, $console, $importMeta) {
+      const wrappedCode = `(function($exports, $require, $module, $filename, $dirname, $process, $console, $importMeta, $dynamicImport) {
 var exports = $exports;
 var require = $require;
 var module = $module;
@@ -402,6 +604,7 @@ var __dirname = $dirname;
 var process = $process;
 var console = $console;
 var import_meta = $importMeta;
+var __dynamicImport = $dynamicImport;
 return (function() {
 ${code}
 }).call(this);
@@ -415,6 +618,9 @@ ${code}
         console.error('[runtime] First 500 chars of code:', code.substring(0, 500));
         throw evalError;
       }
+      // Create dynamic import function for this module context
+      const dynamicImport = createDynamicImport(moduleRequire);
+
       fn(
         module.exports,
         moduleRequire,
@@ -423,7 +629,8 @@ ${code}
         dirname,
         process,
         consoleWrapper,
-        { url: importMetaUrl, dirname, filename: resolvedPath }
+        { url: importMetaUrl, dirname, filename: resolvedPath },
+        dynamicImport
       );
 
       module.loaded = true;
@@ -494,6 +701,14 @@ ${code}
     if (id === 'esbuild' || id.startsWith('esbuild/') || id.startsWith('@esbuild/')) {
       return builtinModules['esbuild'];
     }
+    // Intercept prettier - uses createRequire which doesn't work in our runtime
+    if (id === 'prettier' || id.startsWith('prettier/')) {
+      return builtinModules['prettier'];
+    }
+    // Intercept Sentry - SDK tries to monkey-patch http which doesn't work
+    if (id.startsWith('@sentry/')) {
+      return builtinModules['@sentry/node'];
+    }
 
     const resolved = resolveModule(id, currentDir);
 
@@ -502,7 +717,7 @@ ${code}
       return builtinModules[resolved];
     }
 
-    // Also check if resolved path is to rollup or esbuild in node_modules
+    // Also check if resolved path is to rollup, esbuild, or prettier in node_modules
     if (resolved.includes('/node_modules/rollup/') ||
         resolved.includes('/node_modules/@rollup/')) {
       return builtinModules['rollup'];
@@ -510,6 +725,12 @@ ${code}
     if (resolved.includes('/node_modules/esbuild/') ||
         resolved.includes('/node_modules/@esbuild/')) {
       return builtinModules['esbuild'];
+    }
+    if (resolved.includes('/node_modules/prettier/')) {
+      return builtinModules['prettier'];
+    }
+    if (resolved.includes('/node_modules/@sentry/')) {
+      return builtinModules['@sentry/node'];
     }
 
     return loadModule(resolved).exports;
