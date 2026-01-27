@@ -94,6 +94,36 @@ export interface NextDevServerOptions extends DevServerOptions {
 const TAILWIND_CDN_SCRIPT = `<script src="https://cdn.tailwindcss.com"></script>`;
 
 /**
+ * CORS Proxy script - provides proxyFetch function in the iframe
+ * Reads proxy URL from localStorage (set by parent window)
+ */
+const CORS_PROXY_SCRIPT = `
+<script>
+  // CORS Proxy support for external API calls
+  window.__getCorsProxy = function() {
+    return localStorage.getItem('__corsProxyUrl') || null;
+  };
+
+  window.__setCorsProxy = function(url) {
+    if (url) {
+      localStorage.setItem('__corsProxyUrl', url);
+    } else {
+      localStorage.removeItem('__corsProxyUrl');
+    }
+  };
+
+  window.__proxyFetch = async function(url, options) {
+    const proxyUrl = window.__getCorsProxy();
+    if (proxyUrl) {
+      const proxiedUrl = proxyUrl + encodeURIComponent(url);
+      return fetch(proxiedUrl, options);
+    }
+    return fetch(url, options);
+  };
+</script>
+`;
+
+/**
  * React Refresh preamble - MUST run before React is loaded
  */
 const REACT_REFRESH_PREAMBLE = `
@@ -1155,6 +1185,7 @@ export class NextDevServer extends DevServer {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Next.js App</title>
   ${TAILWIND_CDN_SCRIPT}
+  ${CORS_PROXY_SCRIPT}
   ${globalCssLinks.join('\n  ')}
   ${REACT_REFRESH_PREAMBLE}
   <script type="importmap">
@@ -1339,6 +1370,7 @@ export class NextDevServer extends DevServer {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Next.js App</title>
   ${TAILWIND_CDN_SCRIPT}
+  ${CORS_PROXY_SCRIPT}
   ${globalCssLinks.join('\n  ')}
   ${REACT_REFRESH_PREAMBLE}
   <script type="importmap">

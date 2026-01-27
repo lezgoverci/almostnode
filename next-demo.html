@@ -429,12 +429,19 @@
 
     <script type="module">
       import { initNextDemo, initNextAppRouterDemo, startNextDevServer, VirtualFS, Runtime, PackageManager } from './src/next-demo.ts';
-      import { setCorsProxy, getCorsProxy, proxyFetch } from './src/cors-proxy.ts';
 
-      // Expose proxyFetch globally for demo pages to use
-      window.__proxyFetch = proxyFetch;
-      window.__setCorsProxy = setCorsProxy;
-      window.__getCorsProxy = getCorsProxy;
+      // CORS Proxy helpers - use localStorage so iframe can access
+      function setCorsProxy(url) {
+        if (url) {
+          localStorage.setItem('__corsProxyUrl', url);
+        } else {
+          localStorage.removeItem('__corsProxyUrl');
+        }
+      }
+
+      function getCorsProxy() {
+        return localStorage.getItem('__corsProxyUrl') || null;
+      }
 
       const outputEl = document.getElementById('output');
       const editorEl = document.getElementById('editor');
