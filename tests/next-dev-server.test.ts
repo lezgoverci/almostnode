@@ -111,7 +111,7 @@ export default function NotFound() {
 
       expect(response.statusCode).toBe(200);
       expect(response.headers['Content-Type']).toBe('text/html; charset=utf-8');
-      expect(response.body.toString()).toContain('./pages/about.jsx');
+      expect(response.body.toString()).toContain('/pages/about.jsx');
     });
 
     it('should resolve /users/123 to pages/users/[id].jsx', async () => {
@@ -119,7 +119,7 @@ export default function NotFound() {
 
       expect(response.statusCode).toBe(200);
       expect(response.headers['Content-Type']).toBe('text/html; charset=utf-8');
-      expect(response.body.toString()).toContain('./pages/users/[id].jsx');
+      expect(response.body.toString()).toContain('/pages/users/[id].jsx');
     });
 
     it('should return 404 for non-existent pages', async () => {
@@ -141,7 +141,7 @@ export default function TypeScriptPage(): JSX.Element {
       const response = await server.handleRequest('GET', '/typescript', {});
 
       expect(response.statusCode).toBe(200);
-      expect(response.body.toString()).toContain('./pages/typescript.tsx');
+      expect(response.body.toString()).toContain('/pages/typescript.tsx');
     });
 
     it('should handle index files in subdirectories', async () => {
@@ -158,7 +158,7 @@ export default function BlogIndex() {
       const response = await server.handleRequest('GET', '/blog', {});
 
       expect(response.statusCode).toBe(200);
-      expect(response.body.toString()).toContain('./pages/blog/index.jsx');
+      expect(response.body.toString()).toContain('/pages/blog/index.jsx');
     });
   });
 
@@ -299,7 +299,7 @@ export default function handler(req, res) {
       const response = await server.handleRequest('GET', '/about', {});
       const html = response.body.toString();
 
-      expect(html).toContain('./pages/about.jsx');
+      expect(html).toContain('/pages/about.jsx');
     });
   });
 
@@ -461,7 +461,7 @@ export default greeting;
       expect(response.statusCode).toBe(404);
       expect(response.headers['Content-Type']).toBe('text/html; charset=utf-8');
       // Should use custom 404 page, not the default
-      expect(response.body.toString()).toContain('./pages/404.jsx');
+      expect(response.body.toString()).toContain('/pages/404.jsx');
     });
 
     it('should use default 404 when custom page not available', async () => {

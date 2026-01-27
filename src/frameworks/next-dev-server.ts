@@ -300,7 +300,7 @@ export default function Link({ href, children, ...props }) {
       return;
     }
 
-    if (!href || href.startsWith('#') || href.startsWith('?')) {
+    if (typeof href !== 'string' || !href || href.startsWith('#') || href.startsWith('?')) {
       return;
     }
 
@@ -375,7 +375,7 @@ export function useRouter() {
     query,
     asPath: pathname + window.location.search,
     push: (url, as, options) => {
-      if (/^(https?:)?\\/\\//.test(url)) {
+      if (typeof url === 'string' && /^(https?:)?\\/\\//.test(url)) {
         window.location.href = url;
         return Promise.resolve(true);
       }
@@ -385,7 +385,7 @@ export function useRouter() {
       return Promise.resolve(true);
     },
     replace: (url, as, options) => {
-      if (/^(https?:)?\\/\\//.test(url)) {
+      if (typeof url === 'string' && /^(https?:)?\\/\\//.test(url)) {
         window.location.href = url;
         return Promise.resolve(true);
       }
@@ -416,7 +416,7 @@ export const Router = {
     emit: () => {},
   },
   push: (url) => {
-    if (/^(https?:)?\\/\\//.test(url)) {
+    if (typeof url === 'string' && /^(https?:)?\\/\\//.test(url)) {
       window.location.href = url;
       return Promise.resolve(true);
     }
@@ -426,7 +426,7 @@ export const Router = {
     return Promise.resolve(true);
   },
   replace: (url) => {
-    if (/^(https?:)?\\/\\//.test(url)) {
+    if (typeof url === 'string' && /^(https?:)?\\/\\//.test(url)) {
       window.location.href = url;
       return Promise.resolve(true);
     }
@@ -494,7 +494,7 @@ const stripVirtualBase = (pathname) => {
  */
 export function useRouter() {
   const push = useCallback((url, options) => {
-    if (/^(https?:)?\\/\\//.test(url)) {
+    if (typeof url === 'string' && /^(https?:)?\\/\\//.test(url)) {
       window.location.href = url;
       return;
     }
@@ -504,7 +504,7 @@ export function useRouter() {
   }, []);
 
   const replace = useCallback((url, options) => {
-    if (/^(https?:)?\\/\\//.test(url)) {
+    if (typeof url === 'string' && /^(https?:)?\\/\\//.test(url)) {
       window.location.href = url;
       return;
     }
@@ -609,7 +609,7 @@ export function useSelectedLayoutSegments() {
  * In this browser implementation, performs immediate navigation
  */
 export function redirect(url) {
-  if (/^(https?:)?\\/\\//.test(url)) {
+  if (typeof url === 'string' && /^(https?:)?\\/\\//.test(url)) {
     window.location.href = url;
     return;
   }
@@ -1338,20 +1338,23 @@ export class NextDevServer extends DevServer {
     route: { page: string; layouts: string[] },
     pathname: string
   ): Promise<string> {
+    // Use virtual server prefix for all file imports so the service worker can intercept them
+    const virtualPrefix = `/__virtual__/${this.port}`;
+
     // Check for global CSS files
     const globalCssLinks: string[] = [];
     const cssLocations = ['/app/globals.css', '/styles/globals.css', '/styles/global.css'];
     for (const cssPath of cssLocations) {
       if (this.exists(cssPath)) {
-        globalCssLinks.push(`<link rel="stylesheet" href=".${cssPath}">`);
+        globalCssLinks.push(`<link rel="stylesheet" href="${virtualPrefix}${cssPath}">`);
       }
     }
 
     // Build the nested component structure
     // Layouts wrap the page from outside in
-    const pageModulePath = '.' + route.page;
+    const pageModulePath = virtualPrefix + route.page; // route.page already starts with /
     const layoutImports = route.layouts
-      .map((layout, i) => `import Layout${i} from '.${layout}';`)
+      .map((layout, i) => `import Layout${i} from '${virtualPrefix}${layout}';`)
       .join('\n    ');
 
     // Build nested JSX: Layout0 > Layout1 > ... > Page
@@ -1378,10 +1381,10 @@ export class NextDevServer extends DevServer {
       "react-dom": "https://esm.sh/react-dom@18.2.0?dev",
       "react-dom/": "https://esm.sh/react-dom@18.2.0&dev/",
       "react-dom/client": "https://esm.sh/react-dom@18.2.0/client?dev",
-      "next/link": "./_next/shims/link.js",
-      "next/router": "./_next/shims/router.js",
-      "next/head": "./_next/shims/head.js",
-      "next/navigation": "./_next/shims/navigation.js"
+      "next/link": "${virtualPrefix}/_next/shims/link.js",
+      "next/router": "${virtualPrefix}/_next/shims/router.js",
+      "next/head": "${virtualPrefix}/_next/shims/head.js",
+      "next/navigation": "${virtualPrefix}/_next/shims/navigation.js"
     }
   }
   </script>
@@ -1533,15 +1536,18 @@ export class NextDevServer extends DevServer {
    * Generate HTML shell for a page
    */
   private async generatePageHtml(pageFile: string, pathname: string): Promise<string> {
-    // Convert page file path to relative module path
-    const pageModulePath = '.' + pageFile;
+    // Use virtual server prefix for all file imports so the service worker can intercept them
+    // Without this, /pages/index.jsx would go to localhost:5173/pages/index.jsx
+    // instead of /__virtual__/3001/pages/index.jsx
+    const virtualPrefix = `/__virtual__/${this.port}`;
+    const pageModulePath = virtualPrefix + pageFile; // pageFile already starts with /
 
     // Check for global CSS files
     const globalCssLinks: string[] = [];
     const cssLocations = ['/styles/globals.css', '/styles/global.css', '/app/globals.css'];
     for (const cssPath of cssLocations) {
       if (this.exists(cssPath)) {
-        globalCssLinks.push(`<link rel="stylesheet" href=".${cssPath}">`);
+        globalCssLinks.push(`<link rel="stylesheet" href="${virtualPrefix}${cssPath}">`);
       }
     }
 
@@ -1563,9 +1569,9 @@ export class NextDevServer extends DevServer {
       "react-dom": "https://esm.sh/react-dom@18.2.0?dev",
       "react-dom/": "https://esm.sh/react-dom@18.2.0&dev/",
       "react-dom/client": "https://esm.sh/react-dom@18.2.0/client?dev",
-      "next/link": "./_next/shims/link.js",
-      "next/router": "./_next/shims/router.js",
-      "next/head": "./_next/shims/head.js"
+      "next/link": "${virtualPrefix}/_next/shims/link.js",
+      "next/router": "${virtualPrefix}/_next/shims/router.js",
+      "next/head": "${virtualPrefix}/_next/shims/head.js"
     }
   }
   </script>

@@ -9,6 +9,7 @@ export class Readable extends EventEmitter {
   private _buffer: Buffer[] = [];
   private _ended: boolean = false;
   private _flowing: boolean = false;
+  private _endEmitted: boolean = false;
   readable: boolean = true;
   readableEnded: boolean = false;
   readableFlowing: boolean | null = null;
@@ -17,12 +18,47 @@ export class Readable extends EventEmitter {
     super();
   }
 
+  // Internal method to add listener without triggering auto-flow
+  private _addListenerInternal(event: string | symbol, listener: (...args: unknown[]) => void): this {
+    // Call base EventEmitter's addListener directly
+    EventEmitter.prototype.addListener.call(this, event as string, listener);
+    return this;
+  }
+
+  // Override on() to auto-flow when 'data' listener is added
+  on(event: string | symbol, listener: (...args: unknown[]) => void): this {
+    this._addListenerInternal(event, listener);
+
+    // In Node.js, adding a 'data' listener puts the stream into flowing mode
+    // We need to resume even if ended, because we need to flush buffered data
+    if (event === 'data' && !this._flowing) {
+      // Use queueMicrotask to allow all listeners to be added first
+      queueMicrotask(() => {
+        if (this.listenerCount('data') > 0 && !this._flowing) {
+          this.resume();
+        }
+      });
+    }
+
+    return this;
+  }
+
+  // Also handle addListener (alias for on)
+  addListener(event: string | symbol, listener: (...args: unknown[]) => void): this {
+    return this.on(event, listener);
+  }
+
   push(chunk: Buffer | string | null): boolean {
     if (chunk === null) {
       this._ended = true;
       this.readableEnded = true;
       this.readable = false;
-      queueMicrotask(() => this.emit('end'));
+      // Only emit 'end' immediately if already flowing and buffer is empty
+      // Otherwise, 'end' will be emitted when resume() flushes the buffer
+      if (this._flowing && this._buffer.length === 0 && !this._endEmitted) {
+        this._endEmitted = true;
+        queueMicrotask(() => this.emit('end'));
+      }
       return false;
     }
 
@@ -31,14 +67,23 @@ export class Readable extends EventEmitter {
 
     if (this._flowing) {
       queueMicrotask(() => {
-        while (this._buffer.length > 0 && this._flowing) {
-          const data = this._buffer.shift();
-          this.emit('data', data);
-        }
+        this._flushBuffer();
       });
     }
 
     return true;
+  }
+
+  private _flushBuffer(): void {
+    while (this._buffer.length > 0 && this._flowing) {
+      const data = this._buffer.shift();
+      this.emit('data', data);
+    }
+    // Emit 'end' after buffer is flushed if stream has ended
+    if (this._ended && this._buffer.length === 0 && !this._endEmitted) {
+      this._endEmitted = true;
+      this.emit('end');
+    }
   }
 
   read(size?: number): Buffer | null {
@@ -75,11 +120,8 @@ export class Readable extends EventEmitter {
     this._flowing = true;
     this.readableFlowing = true;
 
-    // Flush buffer
-    while (this._buffer.length > 0 && this._flowing) {
-      const data = this._buffer.shift();
-      this.emit('data', data);
-    }
+    // Flush buffer and emit 'end' if needed
+    this._flushBuffer();
 
     return this;
   }
