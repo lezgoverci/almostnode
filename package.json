@@ -46,7 +46,8 @@
   "dependencies": {
     "@webcontainer/api": "^1.6.1",
     "just-bash": "^2.7.0",
-    "pako": "^2.1.0"
+    "pako": "^2.1.0",
+    "resolve.exports": "^2.0.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

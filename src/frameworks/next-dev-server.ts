@@ -271,6 +271,24 @@ const HMR_CLIENT_SCRIPT = `
 const NEXT_LINK_SHIM = `
 import React from 'react';
 
+const getVirtualBasePath = () => {
+  const match = window.location.pathname.match(/^\\/__virtual__\\/\\d+(?:\\/|$)/);
+  if (!match) return '';
+  return match[0].endsWith('/') ? match[0] : match[0] + '/';
+};
+
+const applyVirtualBase = (url) => {
+  if (typeof url !== 'string') return url;
+  if (!url || url.startsWith('#') || url.startsWith('?')) return url;
+  if (/^(https?:)?\\/\\//.test(url)) return url;
+
+  const base = getVirtualBasePath();
+  if (!base) return url;
+  if (url.startsWith(base)) return url;
+  if (url.startsWith('/')) return base + url.slice(1);
+  return base + url;
+};
+
 export default function Link({ href, children, ...props }) {
   const handleClick = (e) => {
     if (props.onClick) {
@@ -282,8 +300,17 @@ export default function Link({ href, children, ...props }) {
       return;
     }
 
+    if (!href || href.startsWith('#') || href.startsWith('?')) {
+      return;
+    }
+
+    if (/^(https?:)?\\/\\//.test(href)) {
+      return;
+    }
+
     e.preventDefault();
-    window.history.pushState({}, '', href);
+    const resolvedHref = applyVirtualBase(href);
+    window.history.pushState({}, '', resolvedHref);
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
@@ -301,13 +328,39 @@ import React, { useState, useEffect, createContext, useContext } from 'react';
 
 const RouterContext = createContext(null);
 
+const getVirtualBasePath = () => {
+  const match = window.location.pathname.match(/^\\/__virtual__\\/\\d+(?:\\/|$)/);
+  if (!match) return '';
+  return match[0].endsWith('/') ? match[0] : match[0] + '/';
+};
+
+const applyVirtualBase = (url) => {
+  if (typeof url !== 'string') return url;
+  if (!url || url.startsWith('#') || url.startsWith('?')) return url;
+  if (/^(https?:)?\\/\\//.test(url)) return url;
+
+  const base = getVirtualBasePath();
+  if (!base) return url;
+  if (url.startsWith(base)) return url;
+  if (url.startsWith('/')) return base + url.slice(1);
+  return base + url;
+};
+
+const stripVirtualBase = (pathname) => {
+  const match = pathname.match(/^\\/__virtual__\\/\\d+(?:\\/|$)/);
+  if (!match) return pathname;
+  return '/' + pathname.slice(match[0].length);
+};
+
 export function useRouter() {
-  const [pathname, setPathname] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
+  const [pathname, setPathname] = useState(
+    typeof window !== 'undefined' ? stripVirtualBase(window.location.pathname) : '/'
+  );
   const [query, setQuery] = useState({});
 
   useEffect(() => {
     const updateRoute = () => {
-      setPathname(window.location.pathname);
+      setPathname(stripVirtualBase(window.location.pathname));
       setQuery(Object.fromEntries(new URLSearchParams(window.location.search)));
     };
 
@@ -322,12 +375,22 @@ export function useRouter() {
     query,
     asPath: pathname + window.location.search,
     push: (url, as, options) => {
-      window.history.pushState({}, '', url);
+      if (/^(https?:)?\\/\\//.test(url)) {
+        window.location.href = url;
+        return Promise.resolve(true);
+      }
+      const resolvedUrl = applyVirtualBase(url);
+      window.history.pushState({}, '', resolvedUrl);
       window.dispatchEvent(new PopStateEvent('popstate'));
       return Promise.resolve(true);
     },
     replace: (url, as, options) => {
-      window.history.replaceState({}, '', url);
+      if (/^(https?:)?\\/\\//.test(url)) {
+        window.location.href = url;
+        return Promise.resolve(true);
+      }
+      const resolvedUrl = applyVirtualBase(url);
+      window.history.replaceState({}, '', resolvedUrl);
       window.dispatchEvent(new PopStateEvent('popstate'));
       return Promise.resolve(true);
     },
@@ -353,12 +416,22 @@ export const Router = {
     emit: () => {},
   },
   push: (url) => {
-    window.history.pushState({}, '', url);
+    if (/^(https?:)?\\/\\//.test(url)) {
+      window.location.href = url;
+      return Promise.resolve(true);
+    }
+    const resolvedUrl = applyVirtualBase(url);
+    window.history.pushState({}, '', resolvedUrl);
     window.dispatchEvent(new PopStateEvent('popstate'));
     return Promise.resolve(true);
   },
   replace: (url) => {
-    window.history.replaceState({}, '', url);
+    if (/^(https?:)?\\/\\//.test(url)) {
+      window.location.href = url;
+      return Promise.resolve(true);
+    }
+    const resolvedUrl = applyVirtualBase(url);
+    window.history.replaceState({}, '', resolvedUrl);
     window.dispatchEvent(new PopStateEvent('popstate'));
     return Promise.resolve(true);
   },
@@ -390,6 +463,30 @@ export default { useRouter, Router };
 const NEXT_NAVIGATION_SHIM = `
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
+const getVirtualBasePath = () => {
+  const match = window.location.pathname.match(/^\\/__virtual__\\/\\d+(?:\\/|$)/);
+  if (!match) return '';
+  return match[0].endsWith('/') ? match[0] : match[0] + '/';
+};
+
+const applyVirtualBase = (url) => {
+  if (typeof url !== 'string') return url;
+  if (!url || url.startsWith('#') || url.startsWith('?')) return url;
+  if (/^(https?:)?\\/\\//.test(url)) return url;
+
+  const base = getVirtualBasePath();
+  if (!base) return url;
+  if (url.startsWith(base)) return url;
+  if (url.startsWith('/')) return base + url.slice(1);
+  return base + url;
+};
+
+const stripVirtualBase = (pathname) => {
+  const match = pathname.match(/^\\/__virtual__\\/\\d+(?:\\/|$)/);
+  if (!match) return pathname;
+  return '/' + pathname.slice(match[0].length);
+};
+
 /**
  * App Router's useRouter hook
  * Returns navigation methods only (no pathname, no query)
@@ -397,12 +494,22 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
  */
 export function useRouter() {
   const push = useCallback((url, options) => {
-    window.history.pushState({}, '', url);
+    if (/^(https?:)?\\/\\//.test(url)) {
+      window.location.href = url;
+      return;
+    }
+    const resolvedUrl = applyVirtualBase(url);
+    window.history.pushState({}, '', resolvedUrl);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, []);
 
   const replace = useCallback((url, options) => {
-    window.history.replaceState({}, '', url);
+    if (/^(https?:)?\\/\\//.test(url)) {
+      window.location.href = url;
+      return;
+    }
+    const resolvedUrl = applyVirtualBase(url);
+    window.history.replaceState({}, '', resolvedUrl);
     window.dispatchEvent(new PopStateEvent('popstate'));
   }, []);
 
@@ -428,11 +535,11 @@ export function useRouter() {
  */
 export function usePathname() {
   const [pathname, setPathname] = useState(
-    typeof window !== 'undefined' ? window.location.pathname : '/'
+    typeof window !== 'undefined' ? stripVirtualBase(window.location.pathname) : '/'
   );
 
   useEffect(() => {
-    const handler = () => setPathname(window.location.pathname);
+    const handler = () => setPathname(stripVirtualBase(window.location.pathname));
     window.addEventListener('popstate', handler);
     return () => window.removeEventListener('popstate', handler);
   }, []);
@@ -502,7 +609,11 @@ export function useSelectedLayoutSegments() {
  * In this browser implementation, performs immediate navigation
  */
 export function redirect(url) {
-  window.location.href = url;
+  if (/^(https?:)?\\/\\//.test(url)) {
+    window.location.href = url;
+    return;
+  }
+  window.location.href = applyVirtualBase(url);
 }
 
 /**

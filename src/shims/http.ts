@@ -818,6 +818,72 @@ export function setServerCloseCallback(callback: ((port: number) => void) | null
   onServerCloseCallback = callback;
 }
 
+/**
+ * HTTP Agent - manages connection persistence and reuse
+ * This is a stub implementation for browser environment
+ */
+export interface AgentOptions {
+  keepAlive?: boolean;
+  keepAliveMsecs?: number;
+  maxSockets?: number;
+  maxTotalSockets?: number;
+  maxFreeSockets?: number;
+  scheduling?: 'fifo' | 'lifo';
+  timeout?: number;
+}
+
+export class Agent extends EventEmitter {
+  maxSockets: number;
+  maxFreeSockets: number;
+  maxTotalSockets: number;
+  sockets: Record<string, Socket[]>;
+  freeSockets: Record<string, Socket[]>;
+  requests: Record<string, IncomingMessage[]>;
+  options: AgentOptions;
+
+  constructor(opts?: AgentOptions) {
+    super();
+    this.options = opts || {};
+    this.maxSockets = opts?.maxSockets ?? Infinity;
+    this.maxFreeSockets = opts?.maxFreeSockets ?? 256;
+    this.maxTotalSockets = opts?.maxTotalSockets ?? Infinity;
+    this.sockets = {};
+    this.freeSockets = {};
+    this.requests = {};
+  }
+
+  createConnection(
+    _options: Record<string, unknown>,
+    callback?: (err: Error | null, socket: Socket) => void
+  ): Socket {
+    const socket = new Socket();
+    if (callback) {
+      callback(null, socket);
+    }
+    return socket;
+  }
+
+  getName(options: { host?: string; port?: number; localAddress?: string }): string {
+    const host = options.host || 'localhost';
+    const port = options.port || 80;
+    return `${host}:${port}:${options.localAddress || ''}`;
+  }
+
+  addRequest(_req: ClientRequest, _options: Record<string, unknown>): void {
+    // Stub - in browser we use fetch instead
+  }
+
+  destroy(): void {
+    // Clean up - stub
+    this.sockets = {};
+    this.freeSockets = {};
+    this.requests = {};
+  }
+}
+
+// Global agent instance
+export const globalAgent = new Agent();
+
 export default {
   Server,
   IncomingMessage,
@@ -833,4 +899,6 @@ export default {
   setServerListenCallback,
   setServerCloseCallback,
   _createClientRequest,
+  Agent,
+  globalAgent,
 };

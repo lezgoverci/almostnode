@@ -13,7 +13,7 @@ import * as httpShim from './shims/http';
 import * as httpsShim from './shims/https';
 import * as netShim from './shims/net';
 import eventsShim from './shims/events';
-import * as streamShim from './shims/stream';
+import streamShim from './shims/stream';
 import * as urlShim from './shims/url';
 import * as querystringShim from './shims/querystring';
 import * as utilShim from './shims/util';
@@ -44,6 +44,8 @@ import * as dgramShim from './shims/dgram';
 import * as vmShim from './shims/vm';
 import * as inspectorShim from './shims/inspector';
 import * as asyncHooksShim from './shims/async_hooks';
+import * as domainShim from './shims/domain';
+import { resolve as resolveExports } from 'resolve.exports';
 
 export interface Module {
   id: string;
@@ -185,6 +187,7 @@ const builtinModules: Record<string, unknown> = {
   inspector: inspectorShim,
   'inspector/promises': inspectorShim,
   async_hooks: asyncHooksShim,
+  domain: domainShim,
 };
 
 /**
@@ -289,28 +292,29 @@ function createRequire(
         const pkgContent = vfs.readFileSync(pkgPath, 'utf8');
         const pkg = JSON.parse(pkgContent);
 
+        // Use resolve.exports to handle the exports field
+        if (pkg.exports) {
+          try {
+            // resolveExports expects the full module specifier (e.g., 'convex/server')
+            // and returns the resolved path(s) relative to package root
+            const resolved = resolveExports(pkg, moduleId, { require: true });
+            if (resolved && resolved.length > 0) {
+              const exportPath = resolved[0];
+              const fullExportPath = pathShim.join(pkgRoot, exportPath);
+              const resolvedFile = tryResolveFile(fullExportPath);
+              if (resolvedFile) return resolvedFile;
+            }
+          } catch {
+            // resolveExports throws if no match found, fall through to main
+          }
+        }
+
         // If this is the package root (no sub-path), use main entry
         if (pkgName === moduleId) {
           const main = pkg.main || 'index.js';
           const mainPath = pathShim.join(pkgRoot, main);
           const resolvedMain = tryResolveFile(mainPath);
           if (resolvedMain) return resolvedMain;
-        } else {
-          // This is a sub-path within the package
-          // Check if package has exports field
-          if (pkg.exports) {
-            const subPath = './' + moduleId.slice(pkgName.length + 1);
-            const exportEntry = pkg.exports[subPath];
-            if (exportEntry) {
-              const exportPath = typeof exportEntry === 'string'
-                ? exportEntry
-                : (exportEntry.require || exportEntry.default || exportEntry.node);
-              if (exportPath) {
-                const resolved = tryResolveFile(pathShim.join(pkgRoot, exportPath));
-                if (resolved) return resolved;
-              }
-            }
-          }
         }
       }
 

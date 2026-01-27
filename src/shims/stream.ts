@@ -367,11 +367,14 @@ export class Stream extends EventEmitter {
 }
 
 // Make Stream also have static references to all stream types
+// This allows: const Stream = require('stream'); class X extends Stream {}
+// And also: const { Readable } = require('stream');
 (Stream as unknown as Record<string, unknown>).Readable = Readable;
 (Stream as unknown as Record<string, unknown>).Writable = Writable;
 (Stream as unknown as Record<string, unknown>).Duplex = Duplex;
 (Stream as unknown as Record<string, unknown>).Transform = Transform;
 (Stream as unknown as Record<string, unknown>).PassThrough = PassThrough;
+(Stream as unknown as Record<string, unknown>).Stream = Stream;
 
 // Promises API
 export const promises = {
@@ -569,14 +572,11 @@ if (typeof globalThis.Buffer === 'undefined') {
 
 export { BufferPolyfill as Buffer };
 
-export default {
-  Stream,
-  Readable,
-  Writable,
-  Duplex,
-  Transform,
-  PassThrough,
-  pipeline,
-  finished,
-  promises,
-};
+// Add remaining properties to Stream for require('stream') compatibility
+(Stream as unknown as Record<string, unknown>).pipeline = pipeline;
+(Stream as unknown as Record<string, unknown>).finished = finished;
+(Stream as unknown as Record<string, unknown>).promises = promises;
+
+// Export Stream as default so `require('stream')` returns Stream class
+// which can be extended and also has all stream types as properties
+export default Stream;

@@ -242,6 +242,26 @@ export function isBuffer(value: unknown): boolean {
   return value instanceof Uint8Array;
 }
 
+/**
+ * Returns a function that logs debug messages when NODE_DEBUG includes the section
+ */
+export function debuglog(section: string): (...args: unknown[]) => void {
+  const nodeDebug = (typeof process !== 'undefined' && process.env?.NODE_DEBUG) || '';
+  const enabled = nodeDebug.toLowerCase().includes(section.toLowerCase());
+
+  if (enabled) {
+    return (...args: unknown[]) => {
+      console.error(`${section.toUpperCase()} ${process?.pid || 0}:`, ...args);
+    };
+  }
+
+  // Return a no-op function
+  return () => {};
+}
+
+// Alias for debuglog
+export const debug = debuglog;
+
 export const types = {
   isArray,
   isBoolean,
@@ -266,6 +286,8 @@ export default {
   deprecate,
   promisify,
   callbackify,
+  debuglog,
+  debug,
   isArray,
   isBoolean,
   isNull,

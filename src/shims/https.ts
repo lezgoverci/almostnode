@@ -16,9 +16,11 @@ import {
   setServerListenCallback,
   setServerCloseCallback,
   _createClientRequest,
+  Agent,
+  globalAgent,
 } from './http';
 
-import type { RequestOptions } from './http';
+import type { RequestOptions, AgentOptions } from './http';
 
 // Re-export all http types and classes
 export {
@@ -33,7 +35,11 @@ export {
   getAllServers,
   setServerListenCallback,
   setServerCloseCallback,
+  Agent,
+  globalAgent,
 };
+
+export type { AgentOptions };
 
 export type { RequestOptions };
 
@@ -75,4 +81,6 @@ export default {
   getAllServers,
   setServerListenCallback,
   setServerCloseCallback,
+  Agent,
+  globalAgent,
 };
