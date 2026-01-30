@@ -294,38 +294,169 @@ console.log(result.exports); // 2
 
 ## Sandbox Setup
 
-For running untrusted code securely, deploy a cross-origin sandbox:
+For running untrusted code securely, deploy a cross-origin sandbox. The key requirement is that the sandbox must be served from a **different origin** (different domain, subdomain, or port).
 
-### 1. Generate sandbox files
+### Quick Setup (Vercel)
 
 ```typescript
 import { generateSandboxFiles } from 'just-node';
 
 const files = generateSandboxFiles();
-// files['index.html'] - Sandbox HTML page
-// files['vercel.json'] - CORS headers config
+// Write files['index.html'] and files['vercel.json'] to a directory
+// Deploy: cd sandbox && vercel --prod
 ```
 
-### 2. Deploy to Vercel
+### Manual Setup (Any Platform)
 
-```bash
-mkdir sandbox
-# Write files to sandbox/
-cd sandbox && vercel --prod
-# → https://your-app-sandbox.vercel.app
+The sandbox requires two things:
+
+#### 1. The sandbox HTML page
+
+Create an `index.html` that loads just-node and handles postMessage:
+
+```html
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"></head>
+<body>
+<script type="module">
+  import { VirtualFS, Runtime } from 'https://unpkg.com/just-node/dist/index.js';
+
+  let vfs = null;
+  let runtime = null;
+
+  window.addEventListener('message', async (event) => {
+    const { type, id, code, filename, vfsSnapshot, options, path, content } = event.data;
+
+    try {
+      switch (type) {
+        case 'init':
+          vfs = VirtualFS.fromSnapshot(vfsSnapshot);
+          runtime = new Runtime(vfs, {
+            cwd: options?.cwd,
+            env: options?.env,
+            onConsole: (method, args) => {
+              parent.postMessage({ type: 'console', consoleMethod: method, consoleArgs: args }, '*');
+            },
+          });
+          break;
+        case 'execute':
+          const result = runtime.execute(code, filename);
+          parent.postMessage({ type: 'result', id, result }, '*');
+          break;
+        case 'runFile':
+          const runResult = runtime.runFile(filename);
+          parent.postMessage({ type: 'result', id, result: runResult }, '*');
+          break;
+        case 'syncFile':
+          if (content === null) { try { vfs.unlinkSync(path); } catch {} }
+          else { vfs.writeFileSync(path, content); }
+          break;
+        case 'clearCache':
+          runtime?.clearCache();
+          break;
+      }
+    } catch (error) {
+      if (id) parent.postMessage({ type: 'error', id, error: error.message }, '*');
+    }
+  });
+
+  parent.postMessage({ type: 'ready' }, '*');
+</script>
+</body>
+</html>
 ```
 
-### 3. Use in your app
+#### 2. Required HTTP headers
+
+The sandbox server must include these headers:
+
+```
+Access-Control-Allow-Origin: *
+Cross-Origin-Resource-Policy: cross-origin
+```
+
+**Example configurations:**
+
+<details>
+<summary>Nginx</summary>
+
+```nginx
+server {
+    listen 3002;
+    root /path/to/sandbox;
+
+    location / {
+        add_header Access-Control-Allow-Origin *;
+        add_header Cross-Origin-Resource-Policy cross-origin;
+    }
+}
+```
+</details>
+
+<details>
+<summary>Apache (.htaccess)</summary>
+
+```apache
+Header set Access-Control-Allow-Origin "*"
+Header set Cross-Origin-Resource-Policy "cross-origin"
+```
+</details>
+
+<details>
+<summary>Express.js</summary>
+
+```javascript
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+});
+app.use(express.static('sandbox'));
+app.listen(3002);
+```
+</details>
+
+<details>
+<summary>Python (http.server)</summary>
+
+```python
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+
+class CORSHandler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Cross-Origin-Resource-Policy', 'cross-origin')
+        super().end_headers()
+
+HTTPServer(('', 3002), CORSHandler).serve_forever()
+```
+</details>
+
+### Use in your app
 
 ```typescript
 const runtime = await createRuntime(vfs, {
-  sandbox: 'https://your-app-sandbox.vercel.app',
+  sandbox: 'https://sandbox.yourdomain.com',  // Must be different origin!
 });
 
 // Code runs in isolated cross-origin iframe
-// Cannot access parent's cookies, localStorage, or IndexedDB
 const result = await runtime.execute(untrustedCode);
 ```
+
+### Local Development
+
+For local testing, run the sandbox on a different port:
+
+```bash
+# Terminal 1: Main app on port 5173
+npm run dev
+
+# Terminal 2: Sandbox on port 3002
+npm run sandbox
+```
+
+Then use `sandbox: 'http://localhost:3002/sandbox/'` in your app.
 
 ### What cross-origin sandbox protects
 
