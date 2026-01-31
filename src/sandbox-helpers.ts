@@ -7,16 +7,16 @@
 
 /**
  * HTML template for the sandbox page.
- * This loads just-node and handles postMessage communication with the parent.
+ * This loads almostnode and handles postMessage communication with the parent.
  *
- * @param justNodeUrl - URL to load just-node from (e.g., unpkg, jsdelivr, or your CDN)
+ * @param justNodeUrl - URL to load almostnode from (e.g., unpkg, jsdelivr, or your CDN)
  */
-export function getSandboxHtml(justNodeUrl = 'https://unpkg.com/just-node/dist/index.js'): string {
+export function getSandboxHtml(justNodeUrl = 'https://unpkg.com/almostnode/dist/index.js'): string {
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>just-node Sandbox</title>
+  <title>almostnode Sandbox</title>
 </head>
 <body>
 <script type="module">
@@ -125,12 +125,12 @@ export function getSandboxVercelConfig(): object {
 /**
  * Generate all files needed for deploying a sandbox to Vercel.
  *
- * @param justNodeUrl - URL to load just-node from
+ * @param justNodeUrl - URL to load almostnode from
  * @returns Object with file names as keys and content as values
  *
  * @example
  * ```typescript
- * import { generateSandboxFiles } from 'just-node/sandbox-helpers';
+ * import { generateSandboxFiles } from 'almostnode/sandbox-helpers';
  *
  * const files = generateSandboxFiles();
  * // Write files to sandbox/ directory
@@ -152,7 +152,7 @@ export function generateSandboxFiles(justNodeUrl?: string): {
  * Useful for documentation or CLI output.
  */
 export const SANDBOX_SETUP_INSTRUCTIONS = `
-# Setting up a just-node Sandbox on Vercel
+# Setting up a almostnode Sandbox on Vercel
 
 ## 1. Create sandbox directory
    mkdir sandbox
@@ -169,5 +169,5 @@ export const SANDBOX_SETUP_INSTRUCTIONS = `
      sandbox: 'https://your-sandbox.vercel.app'
    });
 
-For more details, see: https://github.com/anthropics/just-node#sandbox-setup
+For more details, see: https://github.com/anthropics/almostnode#sandbox-setup
 `.trim();

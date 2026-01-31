@@ -19,13 +19,13 @@ describe('Sandbox Helpers', () => {
       expect(html).toContain('</html>');
     });
 
-    it('should include just-node import from unpkg by default', () => {
+    it('should include almostnode import from unpkg by default', () => {
       const html = getSandboxHtml();
-      expect(html).toContain('https://unpkg.com/just-node/dist/index.js');
+      expect(html).toContain('https://unpkg.com/almostnode/dist/index.js');
     });
 
     it('should use custom URL when provided', () => {
-      const customUrl = 'https://cdn.example.com/just-node.js';
+      const customUrl = 'https://cdn.example.com/almostnode.js';
       const html = getSandboxHtml(customUrl);
       expect(html).toContain(customUrl);
       expect(html).not.toContain('unpkg.com');
@@ -95,7 +95,7 @@ describe('Sandbox Helpers', () => {
     });
 
     it('should use custom URL in generated HTML', () => {
-      const customUrl = 'https://my-cdn.com/just-node.js';
+      const customUrl = 'https://my-cdn.com/almostnode.js';
       const files = generateSandboxFiles(customUrl);
       expect(files['index.html']).toContain(customUrl);
     });

@@ -1,4 +1,4 @@
-# just-node
+# almostnode
 
 **Node.js in your browser. Just like that.**
 
@@ -31,7 +31,7 @@ A lightweight, browser-native Node.js runtime environment. Run Node.js code, ins
 - **Node.js 20+** - Required for development and building
 - **Modern browser** - Chrome, Firefox, Safari, or Edge with ES2020+ support
 
-> **Note:** just-node runs in the browser and emulates Node.js 20 APIs. The Node.js requirement is only for development tooling (Vite, Vitest, TypeScript).
+> **Note:** almostnode runs in the browser and emulates Node.js 20 APIs. The Node.js requirement is only for development tooling (Vite, Vitest, TypeScript).
 
 ---
 
@@ -40,13 +40,13 @@ A lightweight, browser-native Node.js runtime environment. Run Node.js code, ins
 ### Installation
 
 ```bash
-npm install just-node
+npm install almostnode
 ```
 
 ### Basic Usage
 
 ```typescript
-import { createContainer } from 'just-node';
+import { createContainer } from 'almostnode';
 
 // Create a Node.js container in the browser
 const container = createContainer();
@@ -67,7 +67,7 @@ console.log(result.exports); // "Hello from the browser!"
 ### Working with Virtual File System
 
 ```typescript
-import { createContainer } from 'just-node';
+import { createContainer } from 'almostnode';
 
 const container = createContainer();
 const { vfs } = container;
@@ -90,7 +90,7 @@ const result = container.runFile('/src/index.js');
 ### With npm Packages
 
 ```typescript
-import { createContainer } from 'just-node';
+import { createContainer } from 'almostnode';
 
 const container = createContainer();
 
@@ -108,7 +108,7 @@ container.execute(`
 ### With Next.js Dev Server
 
 ```typescript
-import { VirtualFS, NextDevServer, getServerBridge } from 'just-node';
+import { VirtualFS, NextDevServer, getServerBridge } from 'almostnode';
 
 const vfs = new VirtualFS();
 
@@ -141,7 +141,7 @@ bridge.registerServer(server, 3000);
 
 ## Comparison with WebContainers
 
-| Feature | just-node | WebContainers |
+| Feature | almostnode | WebContainers |
 |---------|-----------|---------------|
 | **Bundle Size** | ~50KB | ~2MB |
 | **Startup Time** | Instant | 2-5 seconds |
@@ -151,7 +151,7 @@ bridge.registerServer(server, 3000);
 | **Networking** | Virtual ports | Real TCP/IP |
 | **Use Case** | Lightweight playgrounds, demos | Full development environments |
 
-### When to use just-node
+### When to use almostnode
 
 - Building code playgrounds or tutorials
 - Creating interactive documentation
@@ -162,7 +162,7 @@ bridge.registerServer(server, 3000);
 ### Example: Code Playground
 
 ```typescript
-import { createContainer } from 'just-node';
+import { createContainer } from 'almostnode';
 
 function createPlayground() {
   const container = createContainer();
@@ -270,7 +270,7 @@ const module = runtime.require('/path/to/module.js');
 For advanced use cases, use `createRuntime` to create a runtime with security options:
 
 ```typescript
-import { createRuntime, VirtualFS } from 'just-node';
+import { createRuntime, VirtualFS } from 'almostnode';
 
 const vfs = new VirtualFS();
 
@@ -311,7 +311,7 @@ For running untrusted code securely, deploy a cross-origin sandbox. The key requ
 ### Quick Setup (Vercel)
 
 ```typescript
-import { generateSandboxFiles } from 'just-node';
+import { generateSandboxFiles } from 'almostnode';
 
 const files = generateSandboxFiles();
 // Write files['index.html'] and files['vercel.json'] to a directory
@@ -324,7 +324,7 @@ The sandbox requires two things:
 
 #### 1. The sandbox HTML page
 
-Create an `index.html` that loads just-node and handles postMessage:
+Create an `index.html` that loads almostnode and handles postMessage:
 
 ```html
 <!DOCTYPE html>
@@ -332,7 +332,7 @@ Create an `index.html` that loads just-node and handles postMessage:
 <head><meta charset="UTF-8"></head>
 <body>
 <script type="module">
-  import { VirtualFS, Runtime } from 'https://unpkg.com/just-node/dist/index.js';
+  import { VirtualFS, Runtime } from 'https://unpkg.com/almostnode/dist/index.js';
 
   let vfs = null;
   let runtime = null;
@@ -534,7 +534,7 @@ These modules export empty objects or no-op functions:
 ### Vite
 
 ```typescript
-import { VirtualFS, ViteDevServer, getServerBridge } from 'just-node';
+import { VirtualFS, ViteDevServer, getServerBridge } from 'almostnode';
 
 const vfs = new VirtualFS();
 
@@ -593,7 +593,7 @@ Supports both **Pages Router** and **App Router**:
 
 ## Hot Module Replacement (HMR)
 
-just-node includes built-in Hot Module Replacement support for instant updates during development. When you edit files, changes appear immediately in the preview without a full page reload.
+almostnode includes built-in Hot Module Replacement support for instant updates during development. When you edit files, changes appear immediately in the preview without a full page reload.
 
 ### How It Works
 
@@ -674,8 +674,8 @@ triggerHMR('/app/page.tsx', iframe);
 ### Setup
 
 ```bash
-git clone https://github.com/user/just-node.git
-cd just-node
+git clone https://github.com/user/almostnode.git
+cd almostnode
 npm install
 ```
 

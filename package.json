@@ -1,5 +1,5 @@
 {
-  "name": "just-node",
+  "name": "almostnode",
   "version": "0.1.0",
   "description": "Node.js in your browser. Just like that.",
   "type": "module",
@@ -17,11 +17,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/just-node.git"
+    "url": "https://github.com/user/almostnode.git"
   },
-  "homepage": "https://github.com/user/just-node#readme",
+  "homepage": "https://github.com/user/almostnode#readme",
   "bugs": {
-    "url": "https://github.com/user/just-node/issues"
+    "url": "https://github.com/user/almostnode/issues"
   },
   "author": "",
   "engines": {

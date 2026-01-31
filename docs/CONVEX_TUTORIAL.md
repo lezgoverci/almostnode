@@ -41,8 +41,8 @@ All without any backend server - everything runs client-side.
 ### Minimal Example
 
 ```typescript
-import { VirtualFS, Runtime, NextDevServer, PackageManager } from 'just-node';
-import { getServerBridge } from 'just-node/server-bridge';
+import { VirtualFS, Runtime, NextDevServer, PackageManager } from 'almostnode';
+import { getServerBridge } from 'almostnode/server-bridge';
 
 // 1. Create virtual filesystem
 const vfs = new VirtualFS();
@@ -82,7 +82,7 @@ console.log(`App running at: ${url}`);
 An in-memory filesystem implementation compatible with Node.js `fs` module.
 
 ```typescript
-import { VirtualFS } from 'just-node';
+import { VirtualFS } from 'almostnode';
 
 const vfs = new VirtualFS();
 
@@ -113,7 +113,7 @@ vfs.watch('/src', { recursive: true }, (event, filename) => {
 Install npm packages into the virtual filesystem.
 
 ```typescript
-import { PackageManager } from 'just-node';
+import { PackageManager } from 'almostnode';
 
 const npm = new PackageManager(vfs, { cwd: '/project' });
 
@@ -131,7 +131,7 @@ await npm.install(['react', 'react-dom']);
 Execute JavaScript/TypeScript code with Node.js-compatible globals.
 
 ```typescript
-import { Runtime } from 'just-node';
+import { Runtime } from 'almostnode';
 
 const runtime = new Runtime(vfs, {
   cwd: '/project',
@@ -155,7 +155,7 @@ runtime.executeFile('/project/src/index.js');
 A lightweight Next.js-compatible development server.
 
 ```typescript
-import { NextDevServer } from 'just-node';
+import { NextDevServer } from 'almostnode';
 
 const server = new NextDevServer(vfs, {
   port: 3000,
@@ -190,7 +190,7 @@ server.stop();
 Connects virtual servers to the browser via Service Workers.
 
 ```typescript
-import { getServerBridge } from 'just-node/server-bridge';
+import { getServerBridge } from 'almostnode/server-bridge';
 
 const bridge = getServerBridge();
 
@@ -221,7 +221,7 @@ This example shows how to:
 ### Step 1: Create Project Structure
 
 ```typescript
-import { VirtualFS, Runtime, NextDevServer, PackageManager } from 'just-node';
+import { VirtualFS, Runtime, NextDevServer, PackageManager } from 'almostnode';
 
 const vfs = new VirtualFS();
 
@@ -404,7 +404,7 @@ function copyGeneratedFiles(vfs) {
 ### Step 5: Start Dev Server with Env Vars
 
 ```typescript
-import { getServerBridge } from 'just-node/server-bridge';
+import { getServerBridge } from 'almostnode/server-bridge';
 
 // Deploy and get the URL
 const convexUrl = await deployToConvex('dev:my-project|token...');

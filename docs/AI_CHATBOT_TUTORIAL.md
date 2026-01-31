@@ -127,7 +127,7 @@ fetch(CORS_PROXY + encodeURIComponent(OPENAI_API_URL), {
 ### Step 1: Create Project Structure
 
 ```typescript
-import { VirtualFS } from 'just-node';
+import { VirtualFS } from 'almostnode';
 
 const vfs = new VirtualFS();
 
@@ -312,8 +312,8 @@ export default function RootLayout({ children }) {
 ### Step 4: Start the Server
 
 ```typescript
-import { NextDevServer } from 'just-node';
-import { getServerBridge } from 'just-node/server-bridge';
+import { NextDevServer } from 'almostnode';
+import { getServerBridge } from 'almostnode/server-bridge';
 
 // Create the dev server
 const devServer = new NextDevServer(vfs, {

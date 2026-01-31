@@ -98,14 +98,14 @@ export async function createRuntime(
   // SECURITY CHECK: Same-origin execution requires explicit opt-in
   if (!dangerouslyAllowSameOrigin) {
     throw new Error(
-      'just-node: For security, you must either:\n' +
+      'almostnode: For security, you must either:\n' +
       '  1. Use sandbox mode: { sandbox: "https://your-sandbox.vercel.app" }\n' +
       '  2. Explicitly opt-in to same-origin: { dangerouslyAllowSameOrigin: true }\n' +
       '\n' +
       'Same-origin execution allows code to access cookies, localStorage, and IndexedDB.\n' +
       'Only use dangerouslyAllowSameOrigin for trusted code or demos.\n' +
       '\n' +
-      'For sandbox setup instructions, see: https://github.com/anthropics/just-node#sandbox-setup'
+      'For sandbox setup instructions, see: https://github.com/anthropics/almostnode#sandbox-setup'
     );
   }
 

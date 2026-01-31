@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>just-node Sandbox</title>
+  <title>almostnode Sandbox</title>
   <style>
     body {
       font-family: system-ui, sans-serif;
@@ -25,7 +25,7 @@
 </head>
 <body>
   <div class="status">
-    <h1>just-node Sandbox</h1>
+    <h1>almostnode Sandbox</h1>
     <p id="status">Loading...</p>
   </div>
 
@@ -35,8 +35,8 @@
     const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
     // Dynamic import based on environment
-    // In production, change this to: 'https://unpkg.com/just-node/dist/index.js'
-    const { VirtualFS, Runtime } = await import(isLocalDev ? '../src/index.ts' : 'https://unpkg.com/just-node/dist/index.js');
+    // In production, change this to: 'https://unpkg.com/almostnode/dist/index.js'
+    const { VirtualFS, Runtime } = await import(isLocalDev ? '../src/index.ts' : 'https://unpkg.com/almostnode/dist/index.js');
 
     const statusEl = document.getElementById('status');
 

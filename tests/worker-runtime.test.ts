@@ -27,7 +27,7 @@ describe('WorkerRuntime', () => {
     });
 
     it('should throw error when neither sandbox nor dangerouslyAllowSameOrigin is provided', async () => {
-      await expect(createRuntime(vfs)).rejects.toThrow('just-node: For security');
+      await expect(createRuntime(vfs)).rejects.toThrow('almostnode: For security');
     });
 
     it('should create runtime with dangerouslyAllowSameOrigin', async () => {
