@@ -816,9 +816,14 @@ export class NextDevServer extends DevServer {
       return this.serveNextShim(pathname);
     }
 
-    // Serve page components for client-side navigation
+    // Serve page components for client-side navigation (Pages Router)
     if (pathname.startsWith('/_next/pages/')) {
       return this.servePageComponent(pathname);
+    }
+
+    // Serve app components for client-side navigation (App Router)
+    if (pathname.startsWith('/_next/app/')) {
+      return this.serveAppComponent(pathname);
     }
 
     // Static assets from /_next/static/*
@@ -920,6 +925,28 @@ export class NextDevServer extends DevServer {
     // Transform and serve the page component as a JS module
     // Use the actual file path (pageFile) for both reading and determining the loader
     return this.transformAndServe(pageFile, pageFile);
+  }
+
+  /**
+   * Serve app components for client-side navigation (App Router)
+   * Maps /_next/app/app/about/page.js → /app/about/page.tsx (transformed)
+   */
+  private async serveAppComponent(pathname: string): Promise<ResponseData> {
+    // Extract the file path from /_next/app/app/about/page.js → /app/about/page
+    const filePath = pathname
+      .replace('/_next/app', '')
+      .replace(/\.js$/, '');
+
+    // Try different extensions
+    const extensions = ['.tsx', '.jsx', '.ts', '.js'];
+    for (const ext of extensions) {
+      const fullPath = filePath + ext;
+      if (this.exists(fullPath)) {
+        return this.transformAndServe(fullPath, fullPath);
+      }
+    }
+
+    return this.notFound(pathname);
   }
 
   /**
@@ -1672,17 +1699,117 @@ export class NextDevServer extends DevServer {
   <script type="module">
     import React from 'react';
     import ReactDOM from 'react-dom/client';
-    import Page from '${pageModulePath}';
-    ${layoutImports}
 
-    function App() {
-      return ${nestedJsx};
+    const virtualBase = '${virtualPrefix}';
+
+    // Convert URL path to app router page module path
+    function getAppPageModulePath(pathname) {
+      let route = pathname;
+      if (route.startsWith(virtualBase)) {
+        route = route.slice(virtualBase.length);
+      }
+      route = route.replace(/^\\/+/, '/') || '/';
+      // App Router: / -> /app/page, /about -> /app/about/page
+      const pagePath = route === '/' ? '/app/page' : '/app' + route + '/page';
+      return virtualBase + '/_next/app' + pagePath + '.js';
     }
 
+    // Get layout paths for a route
+    function getLayoutPaths(pathname) {
+      let route = pathname;
+      if (route.startsWith(virtualBase)) {
+        route = route.slice(virtualBase.length);
+      }
+      route = route.replace(/^\\/+/, '/') || '/';
+
+      // Build layout paths from root to current route
+      const layouts = [virtualBase + '/_next/app/app/layout.js'];
+      if (route !== '/') {
+        const segments = route.split('/').filter(Boolean);
+        let currentPath = '/app';
+        for (const segment of segments) {
+          currentPath += '/' + segment;
+          layouts.push(virtualBase + '/_next/app' + currentPath + '/layout.js');
+        }
+      }
+      return layouts;
+    }
+
+    // Dynamic page loader
+    async function loadPage(pathname) {
+      const modulePath = getAppPageModulePath(pathname);
+      try {
+        const module = await import(/* @vite-ignore */ modulePath);
+        return module.default;
+      } catch (e) {
+        console.error('[Navigation] Failed to load page:', modulePath, e);
+        return null;
+      }
+    }
+
+    // Load layouts (with caching)
+    const layoutCache = new Map();
+    async function loadLayouts(pathname) {
+      const layoutPaths = getLayoutPaths(pathname);
+      const layouts = [];
+      for (const path of layoutPaths) {
+        if (layoutCache.has(path)) {
+          layouts.push(layoutCache.get(path));
+        } else {
+          try {
+            const module = await import(/* @vite-ignore */ path);
+            layoutCache.set(path, module.default);
+            layouts.push(module.default);
+          } catch (e) {
+            // Layout might not exist for this segment, skip
+          }
+        }
+      }
+      return layouts;
+    }
+
+    // Router component
+    function Router() {
+      const [Page, setPage] = React.useState(null);
+      const [layouts, setLayouts] = React.useState([]);
+      const [path, setPath] = React.useState(window.location.pathname);
+
+      React.useEffect(() => {
+        Promise.all([loadPage(path), loadLayouts(path)]).then(([P, L]) => {
+          if (P) setPage(() => P);
+          setLayouts(L);
+        });
+      }, []);
+
+      React.useEffect(() => {
+        const handleNavigation = async () => {
+          const newPath = window.location.pathname;
+          if (newPath !== path) {
+            setPath(newPath);
+            const [P, L] = await Promise.all([loadPage(newPath), loadLayouts(newPath)]);
+            if (P) setPage(() => P);
+            setLayouts(L);
+          }
+        };
+        window.addEventListener('popstate', handleNavigation);
+        return () => window.removeEventListener('popstate', handleNavigation);
+      }, [path]);
+
+      if (!Page) return null;
+
+      // Build nested layout structure
+      let content = React.createElement(Page);
+      for (let i = layouts.length - 1; i >= 0; i--) {
+        content = React.createElement(layouts[i], null, content);
+      }
+      return content;
+    }
+
+    // Mark that we've initialized (for testing no-reload)
+    window.__NEXT_INITIALIZED__ = Date.now();
+
     ReactDOM.createRoot(document.getElementById('__next')).render(
-      React.createElement(React.StrictMode, null,
-        React.createElement(App)
-      )
+      React.createElement(React.StrictMode, null, React.createElement(Router))
     );
   </script>
 </body>
