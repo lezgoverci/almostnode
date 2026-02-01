@@ -367,4 +367,136 @@ describe('Runtime', () => {
       expect(result3.exports).toBe(2);
     });
   });
+
+  describe('module resolution caching', () => {
+    it('should resolve the same module path consistently', () => {
+      vfs.writeFileSync('/lib/util.js', 'module.exports = { name: "util" };');
+
+      // First require should resolve and cache the path
+      const result1 = runtime.execute(`
+        const util1 = require('./lib/util');
+        const util2 = require('./lib/util');
+        module.exports = util1 === util2;
+      `);
+
+      // Both requires should return the same cached module
+      expect(result1.exports).toBe(true);
+    });
+
+    it('should cache module resolution across multiple files', () => {
+      vfs.writeFileSync('/shared.js', 'module.exports = { count: 0 };');
+      vfs.writeFileSync('/a.js', `
+        const shared = require('./shared');
+        shared.count++;
+        module.exports = shared;
+      `);
+      vfs.writeFileSync('/b.js', `
+        const shared = require('./shared');
+        shared.count++;
+        module.exports = shared;
+      `);
+
+      const result = runtime.execute(`
+        const a = require('./a');
+        const b = require('./b');
+        module.exports = { aCount: a.count, bCount: b.count, same: a === b };
+      `);
+
+      // Both should reference the same cached module
+      expect(result.exports.same).toBe(true);
+      expect(result.exports.bCount).toBe(2); // Incremented twice
+    });
+
+    it('should handle resolution cache for non-existent modules', () => {
+      // First attempt should fail
+      expect(() => {
+        runtime.execute('require("./nonexistent")');
+      }).toThrow(/Cannot find module/);
+
+      // Second attempt should also fail (cached negative result)
+      expect(() => {
+        runtime.execute('require("./nonexistent")');
+      }).toThrow(/Cannot find module/);
+
+      // Now create the module
+      vfs.writeFileSync('/nonexistent.js', 'module.exports = "found";');
+
+      // After cache clear, should find the module
+      runtime.clearCache();
+      const result = runtime.execute('module.exports = require("./nonexistent");');
+      expect(result.exports).toBe('found');
+    });
+  });
+
+  describe('processed code caching', () => {
+    it('should reuse processed code when module cache is cleared but content unchanged', () => {
+      // Create a simple CJS module
+      vfs.writeFileSync('/cached-module.js', 'module.exports = { value: 42 };');
+
+      // First execution
+      const result1 = runtime.execute(`
+        const mod = require('./cached-module.js');
+        module.exports = mod.value;
+      `);
+      expect(result1.exports).toBe(42);
+
+      // Clear module cache
+      runtime.clearCache();
+
+      // Second execution - module needs to be re-required but code processing is cached
+      const result2 = runtime.execute(`
+        const mod = require('./cached-module.js');
+        module.exports = mod.value;
+      `);
+      expect(result2.exports).toBe(42);
+    });
+
+    it('should reprocess code when content changes', () => {
+      vfs.writeFileSync('/changeable.js', 'module.exports = { num: 1 };');
+
+      const result1 = runtime.execute(`
+        const mod = require('./changeable.js');
+        module.exports = mod.num;
+      `);
+      expect(result1.exports).toBe(1);
+
+      // Modify the file
+      vfs.writeFileSync('/changeable.js', 'module.exports = { num: 2 };');
+
+      // Clear module cache to force re-require
+      runtime.clearCache();
+
+      // Should get new value (code was reprocessed due to content change)
+      const result2 = runtime.execute(`
+        const mod = require('./changeable.js');
+        module.exports = mod.num;
+      `);
+      expect(result2.exports).toBe(2);
+    });
+
+    it('should handle ESM to CJS transformation caching', () => {
+      // Create a file with ESM syntax in /esm/ directory (triggers transformation)
+      vfs.mkdirSync('/esm', { recursive: true });
+      vfs.writeFileSync('/esm/helper.js', `
+        export const multiply = (a, b) => a * b;
+        export const add = (a, b) => a + b;
+      `);
+
+      const result1 = runtime.execute(`
+        const helper = require('./esm/helper.js');
+        module.exports = helper.multiply(3, 4);
+      `);
+      expect(result1.exports).toBe(12);
+
+      // Clear module cache
+      runtime.clearCache();
+
+      // The transformed code should still work after cache clear
+      const result2 = runtime.execute(`
+        const helper = require('./esm/helper.js');
+        module.exports = helper.add(10, 5);
+      `);
+      expect(result2.exports).toBe(15);
+    });
+  });
 });

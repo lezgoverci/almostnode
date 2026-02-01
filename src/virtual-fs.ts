@@ -8,6 +8,7 @@ export interface FSNode {
   type: 'file' | 'directory';
   content?: Uint8Array;
   children?: Map<string, FSNode>;
+  mtime: number;
 }
 
 // Simple EventEmitter for VFS change notifications
@@ -111,6 +112,7 @@ export class VirtualFS {
     this.root = {
       type: 'directory',
       children: new Map(),
+      mtime: Date.now(),
     };
   }
 
@@ -252,6 +254,7 @@ export class VirtualFS {
     parent.children!.set(basename, {
       type: 'file',
       content,
+      mtime: Date.now(),
     });
 
     if (emitEvent) {
@@ -344,7 +347,7 @@ export class VirtualFS {
 
       let child = current.children.get(segment);
       if (!child) {
-        child = { type: 'directory', children: new Map() };
+        child = { type: 'directory', children: new Map(), mtime: Date.now() };
         current.children.set(segment, child);
       } else if (child.type !== 'directory') {
         throw new Error(`ENOTDIR: not a directory, '${path}'`);
@@ -372,8 +375,8 @@ export class VirtualFS {
       throw createNodeError('ENOENT', 'stat', path);
     }
 
-    const now = Date.now();
     const size = node.type === 'file' ? (node.content?.length || 0) : 0;
+    const mtime = node.mtime;
 
     return {
       isFile: () => node.type === 'file',
@@ -385,14 +388,14 @@ export class VirtualFS {
       isSocket: () => false,
       size,
       mode: node.type === 'directory' ? 0o755 : 0o644,
-      mtime: new Date(now),
-      atime: new Date(now),
-      ctime: new Date(now),
-      birthtime: new Date(now),
-      mtimeMs: now,
-      atimeMs: now,
-      ctimeMs: now,
-      birthtimeMs: now,
+      mtime: new Date(mtime),
+      atime: new Date(mtime),
+      ctime: new Date(mtime),
+      birthtime: new Date(mtime),
+      mtimeMs: mtime,
+      atimeMs: mtime,
+      ctimeMs: mtime,
+      birthtimeMs: mtime,
       nlink: 1,
       uid: 1000,
       gid: 1000,
@@ -478,6 +481,7 @@ export class VirtualFS {
     parent.children!.set(basename, {
       type: 'directory',
       children: new Map(),
+      mtime: Date.now(),
     });
   }
 

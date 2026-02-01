@@ -6,6 +6,7 @@
 import { DevServer, DevServerOptions, ResponseData, HMRUpdate } from '../dev-server';
 import { VirtualFS } from '../virtual-fs';
 import { Buffer } from '../shims/stream';
+import { simpleHash } from '../utils/hash';
 
 // Check if we're in a real browser environment (not jsdom or Node.js)
 const isBrowser = typeof window !== 'undefined' &&
@@ -713,6 +714,9 @@ export class NextDevServer extends DevServer {
 
   /** Store options for later access (e.g., env vars) */
   private options: NextDevServerOptions;
+
+  /** Transform result cache for performance */
+  private transformCache: Map<string, { code: string; hash: string }> = new Map();
 
   constructor(vfs: VirtualFS, options: NextDevServerOptions) {
     super(vfs, options);
@@ -2115,7 +2119,30 @@ export class NextDevServer extends DevServer {
   private async transformAndServe(filePath: string, urlPath: string): Promise<ResponseData> {
     try {
       const content = this.vfs.readFileSync(filePath, 'utf8');
+      const hash = simpleHash(content);
+
+      // Check transform cache
+      const cached = this.transformCache.get(filePath);
+      if (cached && cached.hash === hash) {
+        const buffer = Buffer.from(cached.code);
+        return {
+          statusCode: 200,
+          statusMessage: 'OK',
+          headers: {
+            'Content-Type': 'application/javascript; charset=utf-8',
+            'Content-Length': String(buffer.length),
+            'Cache-Control': 'no-cache',
+            'X-Transformed': 'true',
+            'X-Cache': 'hit',
+          },
+          body: buffer,
+        };
+      }
+
       const transformed = await this.transformCode(content, urlPath);
+
+      // Cache the transform result
+      this.transformCache.set(filePath, { code: transformed, hash });
 
       const buffer = Buffer.from(transformed);
       return {

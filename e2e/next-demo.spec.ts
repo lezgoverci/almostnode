@@ -419,6 +419,199 @@ test.describe('Next.js Demo with Service Worker', () => {
     expect(appContent).toContain('HMR TEST SUCCESS');
   });
 
+  test.describe('Service Worker navigation redirect', () => {
+    test('should redirect plain anchor navigation to include virtual prefix', async ({ page }) => {
+      await page.goto('/examples/next-demo.html');
+      await expect(page.locator('#status-text')).toContainText('Ready', { timeout: 10000 });
+
+      // Start preview
+      await page.click('#run-btn');
+      await expect(page.locator('#status-text')).toContainText('Dev server running', { timeout: 30000 });
+
+      // Wait for iframe to load
+      await page.waitForTimeout(5000);
+
+      const iframe = page.locator('#preview-frame');
+      const iframeHandle = await iframe.elementHandle();
+      const frame = await iframeHandle?.contentFrame();
+
+      if (!frame) {
+        throw new Error('Could not access iframe');
+      }
+
+      await frame.waitForSelector('#__next', { timeout: 15000 });
+
+      // Inject a plain anchor tag (not a Next.js Link) and click it
+      // This tests the service worker redirect for plain <a href="/path"> tags
+      await frame.evaluate(() => {
+        const link = document.createElement('a');
+        link.href = '/about'; // Plain path without virtual prefix
+        link.id = 'test-plain-link';
+        link.textContent = 'Test Plain Link';
+        link.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999;background:red;padding:10px;';
+        document.body.appendChild(link);
+      });
+
+      // Get initial URL
+      const initialUrl = await frame.evaluate(() => window.location.href);
+      console.log('[Initial URL]', initialUrl);
+      expect(initialUrl).toContain('__virtual__/3001');
+
+      // Click the plain link - this should trigger the SW redirect
+      await frame.click('#test-plain-link');
+
+      // Wait for navigation to complete
+      await page.waitForTimeout(2000);
+
+      // The URL should still contain the virtual prefix after redirect
+      const finalUrl = await frame.evaluate(() => window.location.href);
+      console.log('[Final URL after plain link click]', finalUrl);
+
+      expect(finalUrl).toContain('__virtual__/3001');
+      expect(finalUrl).toContain('/about');
+    });
+
+    test('should preserve query params during navigation redirect', async ({ page }) => {
+      await page.goto('/examples/next-demo.html');
+      await expect(page.locator('#status-text')).toContainText('Ready', { timeout: 10000 });
+
+      await page.click('#run-btn');
+      await expect(page.locator('#status-text')).toContainText('Dev server running', { timeout: 30000 });
+
+      await page.waitForTimeout(5000);
+
+      const iframe = page.locator('#preview-frame');
+      const iframeHandle = await iframe.elementHandle();
+      const frame = await iframeHandle?.contentFrame();
+
+      if (!frame) {
+        throw new Error('Could not access iframe');
+      }
+
+      await frame.waitForSelector('#__next', { timeout: 15000 });
+
+      // Inject a plain anchor tag with query params
+      await frame.evaluate(() => {
+        const link = document.createElement('a');
+        link.href = '/about?foo=bar&baz=123'; // Path with query params
+        link.id = 'test-query-link';
+        link.textContent = 'Test Query Link';
+        link.style.cssText = 'position:fixed;top:10px;left:10px;z-index:9999;background:blue;padding:10px;color:white;';
+        document.body.appendChild(link);
+      });
+
+      // Click the link with query params
+      await frame.click('#test-query-link');
+
+      // Wait for navigation
+      await page.waitForTimeout(2000);
+
+      // The URL should contain virtual prefix AND preserve query params
+      const finalUrl = await frame.evaluate(() => window.location.href);
+      console.log('[Final URL with query params]', finalUrl);
+
+      expect(finalUrl).toContain('__virtual__/3001');
+      expect(finalUrl).toContain('/about');
+      expect(finalUrl).toContain('foo=bar');
+      expect(finalUrl).toContain('baz=123');
+    });
+
+    test('should not affect external link navigation', async ({ page }) => {
+      await page.goto('/examples/next-demo.html');
+      await expect(page.locator('#status-text')).toContainText('Ready', { timeout: 10000 });
+
+      await page.click('#run-btn');
+      await expect(page.locator('#status-text')).toContainText('Dev server running', { timeout: 30000 });
+
+      await page.waitForTimeout(3000);
+
+      const iframe = page.locator('#preview-frame');
+      const iframeHandle = await iframe.elementHandle();
+      const frame = await iframeHandle?.contentFrame();
+
+      if (!frame) {
+        throw new Error('Could not access iframe');
+      }
+
+      await frame.waitForSelector('#__next', { timeout: 15000 });
+
+      // Check that external URLs are not modified
+      // We can't actually navigate to external sites in tests, but we can verify
+      // the service worker logic by checking that fetch to external URLs doesn't redirect
+      const result = await page.evaluate(async () => {
+        try {
+          // This should NOT be intercepted by our service worker
+          const response = await fetch('https://example.com', {
+            mode: 'no-cors', // Avoid CORS issues
+          });
+          return {
+            type: response.type,
+            // opaque response means it wasn't intercepted
+            wasIntercepted: response.type !== 'opaque',
+          };
+        } catch (error) {
+          return { error: error instanceof Error ? error.message : String(error) };
+        }
+      });
+
+      console.log('[External URL result]', result);
+      // External URLs should not be redirected through our virtual server
+      if (!result.error) {
+        expect(result.wasIntercepted).toBe(false);
+      }
+    });
+
+    test('should handle navigation from virtual context after page reload', async ({ page }) => {
+      await page.goto('/examples/next-demo.html');
+      await expect(page.locator('#status-text')).toContainText('Ready', { timeout: 10000 });
+
+      await page.click('#run-btn');
+      await expect(page.locator('#status-text')).toContainText('Dev server running', { timeout: 30000 });
+
+      await page.waitForTimeout(5000);
+
+      const iframe = page.locator('#preview-frame');
+      const iframeHandle = await iframe.elementHandle();
+      let frame = await iframeHandle?.contentFrame();
+
+      if (!frame) {
+        throw new Error('Could not access iframe');
+      }
+
+      await frame.waitForSelector('nav', { timeout: 15000 });
+
+      // Get initial URL
+      const initialUrl = await frame.evaluate(() => window.location.href);
+      console.log('[Initial iframe URL]', initialUrl);
+      expect(initialUrl).toContain('__virtual__/3001');
+
+      // Navigate to About using the nav link
+      const aboutLink = frame.locator('nav a[href="/about"]').first();
+      await expect(aboutLink).toBeVisible({ timeout: 5000 });
+      await aboutLink.click();
+
+      await page.waitForTimeout(2000);
+
+      // The URL should still be within the virtual context
+      const urlAfterNav = await frame.evaluate(() => window.location.href);
+      console.log('[URL after navigation]', urlAfterNav);
+      expect(urlAfterNav).toContain('__virtual__/3001');
+      expect(urlAfterNav).toContain('/about');
+
+      // Now navigate back to home
+      const homeLink = frame.locator('nav a[href="/"]').first();
+      await expect(homeLink).toBeVisible({ timeout: 5000 });
+      await homeLink.click();
+
+      await page.waitForTimeout(2000);
+
+      // Should still be in virtual context
+      const urlAfterBackNav = await frame.evaluate(() => window.location.href);
+      console.log('[URL after back navigation]', urlAfterBackNav);
+      expect(urlAfterBackNav).toContain('__virtual__/3001');
+    });
+  });
+
   test('Debug: Check React Refresh registration', async ({ page }) => {
     page.on('console', (msg) => {
       console.log(`[Console ${msg.type()}]`, msg.text());

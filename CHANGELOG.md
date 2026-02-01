@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] - 2025-02-01
+
+### Added
+
+- **Transform caching:** Dev servers now cache transformed JSX/TS files with content-based invalidation, improving reload performance
+- **Module resolution caching:** Runtime caches resolved module paths for faster repeated imports
+- **Package.json parsing cache:** Parsed package.json files are cached to avoid repeated file reads
+- **Processed code caching:** ESM-to-CJS transformed code is cached across module cache clears
+
+### Fixed
+
+- **Service Worker navigation:** Plain `<a href="/path">` links within virtual server context now correctly redirect to include the virtual prefix
+- **Virtual FS mtime:** File system nodes now track actual modification times instead of returning current time
+- **Flaky zlib test:** Fixed non-deterministic test that used random bytes
+
 ## [0.2.4] - 2025-01-31
 
 ### Fixed

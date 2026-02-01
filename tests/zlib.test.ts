@@ -106,14 +106,16 @@ describe('zlib module - brotli-wasm integration', () => {
       }).toThrow();
     });
 
-    it('should throw error when decompressing random bytes', () => {
-      // Create random bytes that are unlikely to be valid brotli
-      const randomBytes = new Uint8Array(
-        Array.from({ length: 100 }, () => Math.floor(Math.random() * 256))
-      );
+    it('should throw error when decompressing invalid bytes', () => {
+      // Use a deterministic invalid sequence - these bytes form an invalid brotli stream
+      // (starts with 0xFF which indicates an invalid window size)
+      const invalidBytes = new Uint8Array([
+        0xff, 0xff, 0xff, 0xff, 0x00, 0x01, 0x02, 0x03,
+        0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b,
+      ]);
 
       expect(() => {
-        brotli.decompress(randomBytes);
+        brotli.decompress(invalidBytes);
       }).toThrow();
     });
 

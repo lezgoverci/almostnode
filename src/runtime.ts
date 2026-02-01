@@ -7,6 +7,8 @@
 
 import { VirtualFS } from './virtual-fs';
 import type { IRuntime, IExecuteResult, IRuntimeOptions } from './runtime-interface';
+import type { PackageJson } from './types/package-json';
+import { simpleHash } from './utils/hash';
 import { createFsShim, FsShim } from './shims/fs';
 import * as pathShim from './shims/path';
 import { createProcess, Process } from './shims/process';
@@ -347,8 +349,30 @@ function createRequire(
   process: Process,
   currentDir: string,
   moduleCache: Record<string, Module>,
-  options: RuntimeOptions
+  options: RuntimeOptions,
+  processedCodeCache?: Map<string, string>
 ): RequireFunction {
+  // Module resolution cache for faster repeated imports
+  const resolutionCache: Map<string, string | null> = new Map();
+
+  // Package.json parsing cache
+  const packageJsonCache: Map<string, PackageJson | null> = new Map();
+
+  const getParsedPackageJson = (pkgPath: string): PackageJson | null => {
+    if (packageJsonCache.has(pkgPath)) {
+      return packageJsonCache.get(pkgPath)!;
+    }
+    try {
+      const content = vfs.readFileSync(pkgPath, 'utf8');
+      const parsed = JSON.parse(content) as PackageJson;
+      packageJsonCache.set(pkgPath, parsed);
+      return parsed;
+    } catch {
+      packageJsonCache.set(pkgPath, null);
+      return null;
+    }
+  };
+
   const resolveModule = (id: string, fromDir: string): string => {
     // Handle node: protocol prefix (Node.js 16+)
     if (id.startsWith('node:')) {
@@ -358,6 +382,16 @@ function createRequire(
     // Built-in modules
     if (builtinModules[id] || id === 'fs' || id === 'process' || id === 'url' || id === 'querystring' || id === 'util') {
       return id;
+    }
+
+    // Check resolution cache
+    const cacheKey = `${fromDir}|${id}`;
+    const cached = resolutionCache.get(cacheKey);
+    if (cached !== undefined) {
+      if (cached === null) {
+        throw new Error(`Cannot find module '${id}'`);
+      }
+      return cached;
     }
 
     // Relative paths
@@ -370,11 +404,13 @@ function createRequire(
       if (vfs.existsSync(resolved)) {
         const stats = vfs.statSync(resolved);
         if (stats.isFile()) {
+          resolutionCache.set(cacheKey, resolved);
           return resolved;
         }
         // Directory - look for index.js
         const indexPath = pathShim.join(resolved, 'index.js');
         if (vfs.existsSync(indexPath)) {
+          resolutionCache.set(cacheKey, indexPath);
           return indexPath;
         }
       }
@@ -384,10 +420,12 @@ function createRequire(
       for (const ext of extensions) {
         const withExt = resolved + ext;
         if (vfs.existsSync(withExt)) {
+          resolutionCache.set(cacheKey, withExt);
           return withExt;
         }
       }
 
+      resolutionCache.set(cacheKey, null);
       throw new Error(`Cannot find module '${id}' from '${fromDir}'`);
     }
 
@@ -436,10 +474,8 @@ function createRequire(
       const pkgRoot = pathShim.join(nodeModulesDir, pkgName);
       const pkgPath = pathShim.join(pkgRoot, 'package.json');
 
-      if (vfs.existsSync(pkgPath)) {
-        const pkgContent = vfs.readFileSync(pkgPath, 'utf8');
-        const pkg = JSON.parse(pkgContent);
-
+      const pkg = getParsedPackageJson(pkgPath);
+      if (pkg) {
         // Use resolve.exports to handle the exports field
         if (pkg.exports) {
           try {
@@ -474,15 +510,22 @@ function createRequire(
     while (searchDir !== '/') {
       const nodeModulesDir = pathShim.join(searchDir, 'node_modules');
       const resolved = tryResolveFromNodeModules(nodeModulesDir, id);
-      if (resolved) return resolved;
+      if (resolved) {
+        resolutionCache.set(cacheKey, resolved);
+        return resolved;
+      }
 
       searchDir = pathShim.dirname(searchDir);
     }
 
     // Try root node_modules as last resort
     const rootResolved = tryResolveFromNodeModules('/node_modules', id);
-    if (rootResolved) return rootResolved;
+    if (rootResolved) {
+      resolutionCache.set(cacheKey, rootResolved);
+      return rootResolved;
+    }
 
+    resolutionCache.set(cacheKey, null);
     throw new Error(`Cannot find module '${id}'`);
   };
 
@@ -514,28 +557,40 @@ function createRequire(
     }
 
     // Read and execute JS file
-    let code = vfs.readFileSync(resolvedPath, 'utf8');
+    const rawCode = vfs.readFileSync(resolvedPath, 'utf8');
     const dirname = pathShim.dirname(resolvedPath);
 
-    // Transform ESM to CJS if needed (for .mjs files or ESM that wasn't pre-transformed)
-    // This handles files that weren't transformed during npm install
-    // BUT skip .cjs files and already-bundled CJS code
-    const isCjsFile = resolvedPath.endsWith('.cjs');
-    const isAlreadyBundledCjs = code.startsWith('"use strict";\nvar __') ||
-                                 code.startsWith("'use strict';\nvar __");
+    // Check processed code cache (useful for HMR when module cache is cleared but code hasn't changed)
+    // Use a simple hash of the content for cache key to handle content changes
+    const codeCacheKey = `${resolvedPath}|${simpleHash(rawCode)}`;
+    let code = processedCodeCache?.get(codeCacheKey);
 
-    const hasEsmImport = /\bimport\s+[\w{*'"]/m.test(code);
-    const hasEsmExport = /\bexport\s+(?:default|const|let|var|function|class|{|\*)/m.test(code);
+    if (!code) {
+      code = rawCode;
 
-    if (!isCjsFile && !isAlreadyBundledCjs) {
-      if (resolvedPath.endsWith('.mjs') || resolvedPath.includes('/esm/') || hasEsmImport || hasEsmExport) {
-        code = transformEsmToCjs(code, resolvedPath);
+      // Transform ESM to CJS if needed (for .mjs files or ESM that wasn't pre-transformed)
+      // This handles files that weren't transformed during npm install
+      // BUT skip .cjs files and already-bundled CJS code
+      const isCjsFile = resolvedPath.endsWith('.cjs');
+      const isAlreadyBundledCjs = code.startsWith('"use strict";\nvar __') ||
+                                   code.startsWith("'use strict';\nvar __");
+
+      const hasEsmImport = /\bimport\s+[\w{*'"]/m.test(code);
+      const hasEsmExport = /\bexport\s+(?:default|const|let|var|function|class|{|\*)/m.test(code);
+
+      if (!isCjsFile && !isAlreadyBundledCjs) {
+        if (resolvedPath.endsWith('.mjs') || resolvedPath.includes('/esm/') || hasEsmImport || hasEsmExport) {
+          code = transformEsmToCjs(code, resolvedPath);
+        }
       }
-    }
 
-    // Transform dynamic imports: import('x') -> __dynamicImport('x')
-    // This allows dynamic imports to work in our eval-based runtime
-    code = transformDynamicImports(code);
+      // Transform dynamic imports: import('x') -> __dynamicImport('x')
+      // This allows dynamic imports to work in our eval-based runtime
+      code = transformDynamicImports(code);
+
+      // Cache the processed code
+      processedCodeCache?.set(codeCacheKey, code);
+    }
 
     // Create require for this module
     const moduleRequire = createRequire(
@@ -544,7 +599,8 @@ function createRequire(
       process,
       dirname,
       moduleCache,
-      options
+      options,
+      processedCodeCache
     );
     moduleRequire.cache = moduleCache;
 
@@ -779,6 +835,8 @@ export class Runtime {
   private process: Process;
   private moduleCache: Record<string, Module> = {};
   private options: RuntimeOptions;
+  /** Cache for pre-processed code (after ESM transform) before eval */
+  private processedCodeCache: Map<string, string> = new Map();
 
   constructor(vfs: VirtualFS, options: RuntimeOptions = {}) {
     this.vfs = vfs;
@@ -907,7 +965,8 @@ export class Runtime {
       this.process,
       dirname,
       this.moduleCache,
-      this.options
+      this.options,
+      this.processedCodeCache
     );
 
     // Create module object

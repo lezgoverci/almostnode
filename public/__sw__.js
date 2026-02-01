@@ -1,7 +1,7 @@
 /**
  * Service Worker for Mini WebContainers
  * Intercepts fetch requests and routes them to virtual servers
- * Version: 12 - add COEP/COOP headers for iframe embedding
+ * Version: 13 - redirect navigation requests from virtual context to include prefix
  */
 
 // Communication port with main thread
@@ -212,6 +212,28 @@ self.addEventListener('fetch', (event) => {
   const match = url.pathname.match(/^\/__virtual__\/(\d+)(\/.*)?$/);
 
   if (!match) {
+    // Not a virtual request - but check if it's a navigation from a virtual context
+    // This handles plain <a href="/about"> links that should stay within the virtual server
+    if (event.request.mode === 'navigate') {
+      const referer = event.request.referrer;
+      if (referer) {
+        try {
+          const refererUrl = new URL(referer);
+          const refererMatch = refererUrl.pathname.match(/^\/__virtual__\/(\d+)/);
+          if (refererMatch) {
+            // User clicked a link from within a virtual server context
+            // Redirect to include the virtual prefix
+            const virtualPrefix = refererMatch[0];
+            const redirectUrl = url.origin + virtualPrefix + url.pathname + url.search;
+            console.log('[SW] Redirecting navigation from virtual context:', url.pathname, '->', redirectUrl);
+            event.respondWith(Response.redirect(redirectUrl, 302));
+            return;
+          }
+        } catch (e) {
+          // Invalid referer URL, ignore
+        }
+      }
+    }
     // Not a virtual request, let it pass through
     return;
   }

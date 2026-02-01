@@ -407,6 +407,67 @@ export default greeting;
     });
   });
 
+  describe('transform caching', () => {
+    it('should cache transformed files and return X-Cache: hit on second request', async () => {
+      // First request - should be a cache miss (no X-Cache header or not 'hit')
+      const response1 = await server.handleRequest('GET', '/pages/index.jsx', {});
+      expect(response1.statusCode).toBe(200);
+      expect(response1.headers['X-Cache']).toBeUndefined();
+
+      // Second request - should be a cache hit
+      const response2 = await server.handleRequest('GET', '/pages/index.jsx', {});
+      expect(response2.statusCode).toBe(200);
+      expect(response2.headers['X-Cache']).toBe('hit');
+    });
+
+    it('should invalidate cache when file content changes', async () => {
+      // First request to populate cache
+      await server.handleRequest('GET', '/pages/index.jsx', {});
+
+      // Second request - cache hit
+      const response2 = await server.handleRequest('GET', '/pages/index.jsx', {});
+      expect(response2.headers['X-Cache']).toBe('hit');
+
+      // Modify the file
+      vfs.writeFileSync(
+        '/pages/index.jsx',
+        `import React from 'react';
+export default function Home() {
+  return <div><h1>Updated Home Page</h1></div>;
+}
+`
+      );
+
+      // Third request - should be a cache miss due to content change
+      const response3 = await server.handleRequest('GET', '/pages/index.jsx', {});
+      expect(response3.statusCode).toBe(200);
+      expect(response3.headers['X-Cache']).toBeUndefined();
+
+      // Fourth request - should be a cache hit again
+      const response4 = await server.handleRequest('GET', '/pages/index.jsx', {});
+      expect(response4.headers['X-Cache']).toBe('hit');
+    });
+
+    it('should cache different files independently', async () => {
+      // Request first file
+      await server.handleRequest('GET', '/pages/index.jsx', {});
+      const response1 = await server.handleRequest('GET', '/pages/index.jsx', {});
+      expect(response1.headers['X-Cache']).toBe('hit');
+
+      // Request second file - should be cache miss
+      const response2 = await server.handleRequest('GET', '/pages/about.jsx', {});
+      expect(response2.headers['X-Cache']).toBeUndefined();
+
+      // Request second file again - should be cache hit
+      const response3 = await server.handleRequest('GET', '/pages/about.jsx', {});
+      expect(response3.headers['X-Cache']).toBe('hit');
+
+      // First file should still be cached
+      const response4 = await server.handleRequest('GET', '/pages/index.jsx', {});
+      expect(response4.headers['X-Cache']).toBe('hit');
+    });
+  });
+
   describe('HMR events', () => {
     it('should emit hmr-update on file change', async () => {
       const listener = vi.fn();
