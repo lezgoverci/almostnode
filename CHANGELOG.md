@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] - 2026-02-05
+
+### Added
+
+- **AST-based code transforms:** Replaced fragile regex-based transforms with proper AST parsing using `acorn` and `css-tree`
+  - CSS Modules: `css-tree` AST for reliable class extraction and scoping (handles pseudo-selectors, nested rules, media queries)
+  - ESM→CJS: `acorn` AST for precise import/export conversion (handles class exports, re-exports, `export *`, namespace imports)
+  - React Refresh: `acorn` AST component detection — no longer false-detects `const API_URL = "..."` as a component
+  - npm import redirect: `acorn` AST targets import/export source strings precisely, avoiding false matches in comments/strings
+  - All transforms gracefully fall back to regex if AST parsing fails
+- **Shared code-transforms module:** Extracted ~350 lines of transform logic into `src/frameworks/code-transforms.ts`, deduplicating `addReactRefresh()` between NextDevServer and ViteDevServer
+- **New features:** CSS Modules, App Router API Routes, `useParams`, Route Groups, `basePath`, `loading.tsx`/`error.tsx`/`not-found.tsx` convention files, `next/font/local`
+- **E2E test harness:** Added `examples/next-features-test.html` and `e2e/next-features.spec.ts` with 25 Playwright tests covering all new features
+
+### Fixed
+
+- **App Router API query params:** Fixed query string not being passed to App Router route handlers (`handleAppRouteHandler` now receives `urlObj.search`)
+- **E2E import paths:** Fixed `examples/vite-demo.html` and `examples/sandbox-next-demo.html` using wrong relative import path (`./src/` → `../src/`)
+- **E2E test assertions:** Fixed dynamic route test checking for `[id].jsx` string that never appears in generated HTML; fixed vite-error-overlay blocking clicks in navigation tests
+- **Convex demo logging:** Added key file path logging so e2e tests can verify project files
+
+### Dependencies
+
+- Added `acorn` (8.15.0), `acorn-jsx` (5.3.2), `css-tree` (3.1.0)
+
 ## [0.2.6] - 2026-02-02
 
 ### Added

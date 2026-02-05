@@ -7,6 +7,7 @@ import { DevServer, DevServerOptions, ResponseData, HMRUpdate } from '../dev-ser
 import { VirtualFS } from '../virtual-fs';
 import { Buffer } from '../shims/stream';
 import { simpleHash } from '../utils/hash';
+import { addReactRefresh as _addReactRefresh } from './code-transforms';
 
 // Check if we're in a real browser environment (not jsdom or Node.js)
 // jsdom has window but doesn't have ServiceWorker or SharedArrayBuffer
@@ -574,68 +575,8 @@ export class ViteDevServer extends DevServer {
     return result.code;
   }
 
-  /**
-   * Add React Refresh registration to transformed code
-   * This enables true HMR (state-preserving) for React components
-   */
   private addReactRefresh(code: string, filename: string): string {
-    // Find React components (functions starting with uppercase letter)
-    const components: string[] = [];
-
-    // Match function declarations: function App() { ... }
-    // Also handles: export function App() { ... }
-    const funcDeclRegex = /(?:^|\n)(?:export\s+)?function\s+([A-Z][a-zA-Z0-9]*)\s*\(/g;
-    let match;
-    while ((match = funcDeclRegex.exec(code)) !== null) {
-      if (!components.includes(match[1])) {
-        components.push(match[1]);
-      }
-    }
-
-    // Match arrow function components: const App = () => { ... }
-    // Also handles: export const App = () => { ... }
-    // And: const App = function() { ... }
-    const arrowRegex = /(?:^|\n)(?:export\s+)?(?:const|let|var)\s+([A-Z][a-zA-Z0-9]*)\s*=/g;
-    while ((match = arrowRegex.exec(code)) !== null) {
-      if (!components.includes(match[1])) {
-        components.push(match[1]);
-      }
-    }
-
-    // If no components found, just add hot module setup without refresh
-    if (components.length === 0) {
-      return `// HMR Setup
-import.meta.hot = window.__vite_hot_context__("${filename}");
-
-${code}
-
-// HMR Accept
-if (import.meta.hot) {
-  import.meta.hot.accept();
-}
-`;
-    }
-
-    // Build React Refresh registration calls
-    const registrations = components
-      .map(name => `  $RefreshReg$(${name}, "${filename} ${name}");`)
-      .join('\n');
-
-    return `// HMR Setup
-import.meta.hot = window.__vite_hot_context__("${filename}");
-
-${code}
-
-// React Refresh Registration
-if (import.meta.hot) {
-${registrations}
-  import.meta.hot.accept(() => {
-    if (window.$RefreshRuntime$) {
-      window.$RefreshRuntime$.performReactRefresh();
-    }
-  });
-}
-`;
+    return _addReactRefresh(code, filename);
   }
 
   /**

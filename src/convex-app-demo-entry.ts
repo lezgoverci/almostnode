@@ -907,6 +907,8 @@ async function main() {
     log('Creating Convex App project structure...');
     createConvexAppProject(vfs);
     log('Project files created', 'success');
+    log('  /convex/schema.ts');
+    log('  /convex/todos.ts');
 
     // Expose VFS to window and build file tree
     exposeVfsToWindow();

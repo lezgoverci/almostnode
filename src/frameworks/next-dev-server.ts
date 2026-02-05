@@ -8,6 +8,13 @@ import { VirtualFS } from '../virtual-fs';
 import { Buffer } from '../shims/stream';
 import { simpleHash } from '../utils/hash';
 import { loadTailwindConfig } from './tailwind-config-loader';
+import {
+  redirectNpmImports as _redirectNpmImports,
+  stripCssImports as _stripCssImports,
+  addReactRefresh as _addReactRefresh,
+  transformEsmToCjsSimple,
+  type CssModuleContext,
+} from './code-transforms';
 
 // Check if we're in a real browser environment (not jsdom or Node.js)
 const isBrowser = typeof window !== 'undefined' &&
@@ -80,6 +87,18 @@ export interface NextDevServerOptions extends DevServerOptions {
   env?: Record<string, string>;
   /** Asset prefix for static files (e.g., '/marketing'). Auto-detected from next.config if not specified. */
   assetPrefix?: string;
+  /** Base path for the app (e.g., '/docs'). Auto-detected from next.config if not specified. */
+  basePath?: string;
+}
+
+/** Resolved App Router route with page, layouts, and UI convention files */
+interface AppRoute {
+  page: string;
+  layouts: string[];
+  params: Record<string, string | string[]>;
+  loading?: string;
+  error?: string;
+  notFound?: string;
 }
 
 /**
@@ -272,10 +291,18 @@ const getVirtualBasePath = () => {
   return match[0].endsWith('/') ? match[0] : match[0] + '/';
 };
 
+const getBasePath = () => window.__NEXT_BASE_PATH__ || '';
+
 const applyVirtualBase = (url) => {
   if (typeof url !== 'string') return url;
   if (!url || url.startsWith('#') || url.startsWith('?')) return url;
   if (/^(https?:)?\\/\\//.test(url)) return url;
+
+  // Apply basePath first
+  const bp = getBasePath();
+  if (bp && url.startsWith('/') && !url.startsWith(bp + '/') && url !== bp) {
+    url = bp + url;
+  }
 
   const base = getVirtualBasePath();
   if (!base) return url;
@@ -575,14 +602,47 @@ export function useSearchParams() {
  * For route /users/[id]/page.jsx with URL /users/123:
  * @example const { id } = useParams(); // { id: '123' }
  *
- * NOTE: This simplified implementation returns empty object.
- * Full implementation would need route pattern matching.
+ * Fetches params from the server's route-info endpoint for dynamic routes.
  */
 export function useParams() {
-  // In a real implementation, this would parse the current route
-  // against the route pattern to extract params
-  // For now, return empty object - works for basic cases
-  return {};
+  const [params, setParams] = useState(() => {
+    // Check if initial params were embedded by the server
+    if (typeof window !== 'undefined' && window.__NEXT_ROUTE_PARAMS__) {
+      return window.__NEXT_ROUTE_PARAMS__;
+    }
+    return {};
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchParams = async () => {
+      const pathname = stripVirtualBase(window.location.pathname);
+      const base = getVirtualBasePath();
+      const baseUrl = base ? base.replace(/\\/$/, '') : '';
+
+      try {
+        const response = await fetch(baseUrl + '/_next/route-info?pathname=' + encodeURIComponent(pathname));
+        const info = await response.json();
+        if (!cancelled && info.params) {
+          setParams(info.params);
+        }
+      } catch (e) {
+        // Silently fail - static routes won't have params
+      }
+    };
+
+    fetchParams();
+
+    const handler = () => fetchParams();
+    window.addEventListener('popstate', handler);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('popstate', handler);
+    };
+  }, []);
+
+  return params;
 }
 
 /**
@@ -997,6 +1057,96 @@ export const {
 `;
 
 /**
+ * next/font/local shim - Loads local font files
+ * Accepts font source path and creates @font-face declaration + CSS variable
+ */
+const NEXT_FONT_LOCAL_SHIM = `
+const loadedLocalFonts = new Set();
+
+function localFont(options = {}) {
+  const {
+    src,
+    weight,
+    style = 'normal',
+    variable,
+    display = 'swap',
+    fallback = ['sans-serif'],
+    declarations = [],
+    adjustFontFallback = true
+  } = options;
+
+  // Determine font family name from variable or src
+  const familyName = variable
+    ? variable.replace('--', '').replace(/-/g, ' ')
+    : 'local-font-' + Math.random().toString(36).slice(2, 8);
+
+  const fontKey = familyName + '-' + (variable || 'default');
+  if (typeof document !== 'undefined' && !loadedLocalFonts.has(fontKey)) {
+    loadedLocalFonts.add(fontKey);
+
+    // Build @font-face declarations
+    let fontFaces = '';
+
+    if (typeof src === 'string') {
+      // Single source
+      fontFaces = '@font-face {\\n' +
+        '  font-family: "' + familyName + '";\\n' +
+        '  src: url("' + src + '");\\n' +
+        '  font-weight: ' + (weight || '400') + ';\\n' +
+        '  font-style: ' + style + ';\\n' +
+        '  font-display: ' + display + ';\\n' +
+        '}';
+    } else if (Array.isArray(src)) {
+      // Multiple sources (different weights/styles)
+      fontFaces = src.map(function(s) {
+        const path = typeof s === 'string' ? s : s.path;
+        const w = (typeof s === 'object' && s.weight) || weight || '400';
+        const st = (typeof s === 'object' && s.style) || style;
+        return '@font-face {\\n' +
+          '  font-family: "' + familyName + '";\\n' +
+          '  src: url("' + path + '");\\n' +
+          '  font-weight: ' + w + ';\\n' +
+          '  font-style: ' + st + ';\\n' +
+          '  font-display: ' + display + ';\\n' +
+          '}';
+      }).join('\\n');
+    }
+
+    // Inject font-face CSS
+    if (fontFaces) {
+      var styleEl = document.createElement('style');
+      styleEl.setAttribute('data-local-font', fontKey);
+      styleEl.textContent = fontFaces;
+      document.head.appendChild(styleEl);
+    }
+
+    // Inject CSS variable at :root level
+    if (variable) {
+      var varStyle = document.createElement('style');
+      varStyle.setAttribute('data-font-var', variable);
+      varStyle.textContent = ':root { ' + variable + ': "' + familyName + '", ' + fallback.join(', ') + '; }';
+      document.head.appendChild(varStyle);
+    }
+  }
+
+  const className = variable
+    ? variable.replace('--', '__')
+    : '__font-' + familyName.toLowerCase().replace(/\\s+/g, '-');
+
+  return {
+    className,
+    variable: className,
+    style: {
+      fontFamily: '"' + familyName + '", ' + fallback.join(', ')
+    }
+  };
+}
+
+export default localFont;
+export { localFont };
+`;
+
+/**
  * NextDevServer - A lightweight Next.js-compatible development server
  *
  * Supports both routing paradigms:
@@ -1056,6 +1206,9 @@ export class NextDevServer extends DevServer {
   /** Asset prefix for static files (e.g., '/marketing') */
   private assetPrefix: string = '';
 
+  /** Base path for the app (e.g., '/docs') */
+  private basePath: string = '';
+
   constructor(vfs: VirtualFS, options: NextDevServerOptions) {
     super(vfs, options);
     this.options = options;
@@ -1077,6 +1230,9 @@ export class NextDevServer extends DevServer {
 
     // Load assetPrefix from options or auto-detect from next.config
     this.loadAssetPrefix(options.assetPrefix);
+
+    // Load basePath from options or auto-detect from next.config
+    this.loadBasePath(options.basePath);
   }
 
   /**
@@ -1156,6 +1312,38 @@ export class NextDevServer extends DevServer {
         }
       }
     } catch (e) {
+      // Silently ignore config parse errors
+    }
+  }
+
+  /**
+   * Load basePath from options or auto-detect from next.config.ts/js
+   * The basePath is used to prefix all routes (e.g., '/docs' means / -> /docs)
+   */
+  private loadBasePath(optionValue?: string): void {
+    if (optionValue !== undefined) {
+      this.basePath = optionValue.startsWith('/') ? optionValue : `/${optionValue}`;
+      if (this.basePath.endsWith('/')) {
+        this.basePath = this.basePath.slice(0, -1);
+      }
+      return;
+    }
+
+    try {
+      const configFiles = ['/next.config.ts', '/next.config.js', '/next.config.mjs'];
+      for (const configPath of configFiles) {
+        if (!this.vfs.existsSync(configPath)) continue;
+        const content = this.vfs.readFileSync(configPath, 'utf-8');
+        const match = content.match(/basePath\s*:\s*["']([^"']+)["']/);
+        if (match) {
+          let bp = match[1];
+          if (!bp.startsWith('/')) bp = `/${bp}`;
+          if (bp.endsWith('/')) bp = bp.slice(0, -1);
+          this.basePath = bp;
+          return;
+        }
+      }
+    } catch {
       // Silently ignore config parse errors
     }
   }
@@ -1246,6 +1434,8 @@ export class NextDevServer extends DevServer {
   window.process = window.process || {};
   window.process.env = window.process.env || {};
   Object.assign(window.process.env, ${JSON.stringify(publicEnvVars)});
+  // Next.js config values
+  window.__NEXT_BASE_PATH__ = ${JSON.stringify(this.basePath)};
 </script>`;
   }
 
@@ -1285,11 +1475,30 @@ export class NextDevServer extends DevServer {
       // Check if /app directory exists and has a page file
       if (!this.exists(this.appDir)) return false;
 
-      // Check for root page
       const extensions = ['.jsx', '.tsx', '.js', '.ts'];
+
+      // Check for root page directly
       for (const ext of extensions) {
         if (this.exists(`${this.appDir}/page${ext}`)) return true;
       }
+
+      // Check for root page inside route groups (e.g., /app/(main)/page.tsx)
+      try {
+        const entries = this.vfs.readdirSync(this.appDir);
+        for (const entry of entries) {
+          if (/^\([^)]+\)$/.test(entry) && this.isDirectory(`${this.appDir}/${entry}`)) {
+            for (const ext of extensions) {
+              if (this.exists(`${this.appDir}/${entry}/page${ext}`)) return true;
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
+      // Also check for any layout.tsx which indicates App Router usage
+      for (const ext of extensions) {
+        if (this.exists(`${this.appDir}/layout${ext}`)) return true;
+      }
+
       return false;
     } catch {
       return false;
@@ -1329,6 +1538,14 @@ export class NextDevServer extends DevServer {
       }
     }
 
+    // Strip basePath if present (e.g., /docs/about -> /about)
+    if (this.basePath && pathname.startsWith(this.basePath)) {
+      const rest = pathname.slice(this.basePath.length);
+      if (rest === '' || rest.startsWith('/')) {
+        pathname = rest || '/';
+      }
+    }
+
     // Serve Next.js shims
     if (pathname.startsWith('/_next/shims/')) {
       return this.serveNextShim(pathname);
@@ -1354,7 +1571,15 @@ export class NextDevServer extends DevServer {
       return this.serveStaticAsset(pathname);
     }
 
-    // API routes: /api/*
+    // App Router API routes (route.ts/route.js) - check before Pages Router API routes
+    if (this.useAppRouter) {
+      const appRouteFile = this.resolveAppRouteHandler(pathname);
+      if (appRouteFile) {
+        return this.handleAppRouteHandler(method, pathname, headers, body, appRouteFile, urlObj.search);
+      }
+    }
+
+    // Pages Router API routes: /api/*
     if (pathname.startsWith('/api/')) {
       return this.handleApiRoute(method, pathname, headers, body);
     }
@@ -1420,6 +1645,9 @@ export class NextDevServer extends DevServer {
         break;
       case 'font/google':
         code = NEXT_FONT_GOOGLE_SHIM;
+        break;
+      case 'font/local':
+        code = NEXT_FONT_LOCAL_SHIM;
         break;
       default:
         return this.notFound(pathname);
@@ -1565,6 +1793,238 @@ export class NextDevServer extends DevServer {
       return res.toResponse();
     } catch (error) {
       console.error('[NextDevServer] API error:', error);
+      return {
+        statusCode: 500,
+        statusMessage: 'Internal Server Error',
+        headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        body: Buffer.from(JSON.stringify({
+          error: error instanceof Error ? error.message : 'Internal Server Error'
+        })),
+      };
+    }
+  }
+
+  /**
+   * Resolve an App Router route handler (route.ts/route.js)
+   * Returns the file path if found, null otherwise
+   */
+  private resolveAppRouteHandler(pathname: string): string | null {
+    const extensions = ['.ts', '.js', '.tsx', '.jsx'];
+
+    // Build the directory path in the app dir
+    const segments = pathname === '/' ? [] : pathname.split('/').filter(Boolean);
+    let dirPath = this.appDir;
+
+    for (const segment of segments) {
+      dirPath = `${dirPath}/${segment}`;
+    }
+
+    // Check for route file
+    for (const ext of extensions) {
+      const routePath = `${dirPath}/route${ext}`;
+      if (this.exists(routePath)) {
+        return routePath;
+      }
+    }
+
+    // Try dynamic route resolution with route groups
+    return this.resolveAppRouteHandlerDynamic(segments);
+  }
+
+  /**
+   * Resolve dynamic App Router route handlers with route group support
+   */
+  private resolveAppRouteHandlerDynamic(segments: string[]): string | null {
+    const extensions = ['.ts', '.js', '.tsx', '.jsx'];
+
+    const tryPath = (dirPath: string, remainingSegments: string[]): string | null => {
+      if (remainingSegments.length === 0) {
+        for (const ext of extensions) {
+          const routePath = `${dirPath}/route${ext}`;
+          if (this.exists(routePath)) {
+            return routePath;
+          }
+        }
+
+        // Check route groups
+        try {
+          const entries = this.vfs.readdirSync(dirPath);
+          for (const entry of entries) {
+            if (/^\([^)]+\)$/.test(entry) && this.isDirectory(`${dirPath}/${entry}`)) {
+              for (const ext of extensions) {
+                const routePath = `${dirPath}/${entry}/route${ext}`;
+                if (this.exists(routePath)) {
+                  return routePath;
+                }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+
+        return null;
+      }
+
+      const [current, ...rest] = remainingSegments;
+
+      // Try exact match
+      const exactPath = `${dirPath}/${current}`;
+      if (this.isDirectory(exactPath)) {
+        const result = tryPath(exactPath, rest);
+        if (result) return result;
+      }
+
+      // Try route groups and dynamic segments
+      try {
+        const entries = this.vfs.readdirSync(dirPath);
+        for (const entry of entries) {
+          // Route groups
+          if (/^\([^)]+\)$/.test(entry) && this.isDirectory(`${dirPath}/${entry}`)) {
+            const groupExact = `${dirPath}/${entry}/${current}`;
+            if (this.isDirectory(groupExact)) {
+              const result = tryPath(groupExact, rest);
+              if (result) return result;
+            }
+          }
+          // Dynamic segments
+          if (entry.startsWith('[') && entry.endsWith(']') && !entry.includes('.')) {
+            const dynamicPath = `${dirPath}/${entry}`;
+            if (this.isDirectory(dynamicPath)) {
+              const result = tryPath(dynamicPath, rest);
+              if (result) return result;
+            }
+          }
+          // Catch-all
+          if (entry.startsWith('[...') && entry.endsWith(']')) {
+            const dynamicPath = `${dirPath}/${entry}`;
+            if (this.isDirectory(dynamicPath)) {
+              const result = tryPath(dynamicPath, []);
+              if (result) return result;
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
+      return null;
+    };
+
+    return tryPath(this.appDir, segments);
+  }
+
+  /**
+   * Handle App Router route handler (route.ts) requests
+   * These use the Web Request/Response API pattern
+   */
+  private async handleAppRouteHandler(
+    method: string,
+    pathname: string,
+    headers: Record<string, string>,
+    body: Buffer | undefined,
+    routeFile: string,
+    search?: string
+  ): Promise<ResponseData> {
+    try {
+      const code = this.vfs.readFileSync(routeFile, 'utf8');
+      const transformed = await this.transformApiHandler(code, routeFile);
+
+      // Create module context
+      const builtinModules: Record<string, unknown> = {
+        https: await import('../shims/https'),
+        http: await import('../shims/http'),
+        path: await import('../shims/path'),
+        url: await import('../shims/url'),
+        querystring: await import('../shims/querystring'),
+        util: await import('../shims/util'),
+        events: await import('../shims/events'),
+        stream: await import('../shims/stream'),
+        buffer: await import('../shims/buffer'),
+        crypto: await import('../shims/crypto'),
+      };
+
+      const require = (id: string): unknown => {
+        const modId = id.startsWith('node:') ? id.slice(5) : id;
+        if (builtinModules[modId]) return builtinModules[modId];
+        throw new Error(`Module not found: ${id}`);
+      };
+
+      const module = { exports: {} as Record<string, unknown> };
+      const exports = module.exports;
+      const process = {
+        env: { ...this.options.env },
+        cwd: () => '/',
+        platform: 'browser',
+        version: 'v18.0.0',
+        versions: { node: '18.0.0' },
+      };
+
+      const fn = new Function('exports', 'require', 'module', 'process', transformed);
+      fn(exports, require, module, process);
+
+      // Get the handler for the HTTP method
+      const methodUpper = method.toUpperCase();
+      const handler = module.exports[methodUpper] || module.exports[methodUpper.toLowerCase()];
+
+      if (typeof handler !== 'function') {
+        return {
+          statusCode: 405,
+          statusMessage: 'Method Not Allowed',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: Buffer.from(JSON.stringify({ error: `Method ${method} not allowed` })),
+        };
+      }
+
+      // Create a Web API Request object
+      const requestUrl = new URL(pathname + (search || ''), 'http://localhost');
+      const requestInit: RequestInit = {
+        method: methodUpper,
+        headers: new Headers(headers),
+      };
+      if (body && methodUpper !== 'GET' && methodUpper !== 'HEAD') {
+        requestInit.body = body;
+      }
+      const request = new Request(requestUrl.toString(), requestInit);
+
+      // Extract route params
+      const route = this.resolveAppRoute(pathname);
+      const params = route?.params || {};
+
+      // Call the handler
+      const response = await handler(request, { params: Promise.resolve(params) });
+
+      // Convert Response to our format
+      if (response instanceof Response) {
+        const respHeaders: Record<string, string> = {};
+        response.headers.forEach((value: string, key: string) => {
+          respHeaders[key] = value;
+        });
+
+        const respBody = await response.text();
+        return {
+          statusCode: response.status,
+          statusMessage: response.statusText || 'OK',
+          headers: respHeaders,
+          body: Buffer.from(respBody),
+        };
+      }
+
+      // If the handler returned a plain object, serialize as JSON
+      if (response && typeof response === 'object') {
+        const json = JSON.stringify(response);
+        return {
+          statusCode: 200,
+          statusMessage: 'OK',
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: Buffer.from(json),
+        };
+      }
+
+      return {
+        statusCode: 200,
+        statusMessage: 'OK',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+        body: Buffer.from(String(response || '')),
+      };
+    } catch (error) {
+      console.error('[NextDevServer] App Route handler error:', error);
       return {
         statusCode: 500,
         statusMessage: 'Internal Server Error',
@@ -2077,82 +2537,128 @@ export class NextDevServer extends DevServer {
   /**
    * Resolve App Router route to page and layout files
    */
-  private resolveAppRoute(pathname: string): { page: string; layouts: string[]; params: Record<string, string | string[]> } | null {
-    const extensions = ['.jsx', '.tsx', '.js', '.ts'];
+  private resolveAppRoute(pathname: string): AppRoute | null {
     const segments = pathname === '/' ? [] : pathname.split('/').filter(Boolean);
-
-    // Build the directory path
-    let dirPath = this.appDir;
-    const layouts: string[] = [];
-
-    // Collect layouts from root to current directory
-    for (const ext of extensions) {
-      const rootLayout = `${this.appDir}/layout${ext}`;
-      if (this.exists(rootLayout)) {
-        layouts.push(rootLayout);
-        break;
-      }
-    }
-
-    // Walk through segments to find page and collect layouts
-    for (const segment of segments) {
-      dirPath = `${dirPath}/${segment}`;
-
-      // Check for layout in this segment
-      for (const ext of extensions) {
-        const layoutPath = `${dirPath}/layout${ext}`;
-        if (this.exists(layoutPath)) {
-          layouts.push(layoutPath);
-          break;
-        }
-      }
-    }
-
-    // Find the page file
-    for (const ext of extensions) {
-      const pagePath = `${dirPath}/page${ext}`;
-      if (this.exists(pagePath)) {
-        // Static route - no params
-        return { page: pagePath, layouts, params: {} };
-      }
-    }
-
-    // Try dynamic segments
+    // Use the unified dynamic resolver which handles static, dynamic, and route groups
     return this.resolveAppDynamicRoute(pathname, segments);
   }
 
   /**
-   * Resolve dynamic App Router routes like /app/[id]/page.jsx
-   * Also extracts route params from dynamic segments
+   * Resolve App Router routes including static, dynamic, and route groups.
+   * Route groups are folders wrapped in parentheses like (marketing) that
+   * don't affect the URL path but can have their own layouts.
    */
   private resolveAppDynamicRoute(
-    pathname: string,
+    _pathname: string,
     segments: string[]
-  ): { page: string; layouts: string[]; params: Record<string, string | string[]> } | null {
+  ): AppRoute | null {
     const extensions = ['.jsx', '.tsx', '.js', '.ts'];
+
+    /**
+     * Collect layout from a directory if it exists
+     */
+    const collectLayout = (dirPath: string, layouts: string[]): string[] => {
+      for (const ext of extensions) {
+        const layoutPath = `${dirPath}/layout${ext}`;
+        if (this.exists(layoutPath) && !layouts.includes(layoutPath)) {
+          return [...layouts, layoutPath];
+        }
+      }
+      return layouts;
+    };
+
+    /**
+     * Find page file in a directory
+     */
+    const findPage = (dirPath: string): string | null => {
+      for (const ext of extensions) {
+        const pagePath = `${dirPath}/page${ext}`;
+        if (this.exists(pagePath)) {
+          return pagePath;
+        }
+      }
+      return null;
+    };
+
+    /**
+     * Find a UI convention file (loading, error, not-found) in a directory
+     */
+    const findConventionFile = (dirPath: string, name: string): string | null => {
+      for (const ext of extensions) {
+        const filePath = `${dirPath}/${name}${ext}`;
+        if (this.exists(filePath)) {
+          return filePath;
+        }
+      }
+      return null;
+    };
+
+    /**
+     * Find the nearest convention file by walking up from the page directory
+     */
+    const findNearestConventionFile = (dirPath: string, name: string): string | null => {
+      let current = dirPath;
+      while (current.startsWith(this.appDir)) {
+        const file = findConventionFile(current, name);
+        if (file) return file;
+        // Move up one directory
+        const parent = current.replace(/\/[^/]+$/, '');
+        if (parent === current) break;
+        current = parent;
+      }
+      return null;
+    };
+
+    /**
+     * Get route group directories (folders matching (name) pattern)
+     */
+    const getRouteGroups = (dirPath: string): string[] => {
+      try {
+        const entries = this.vfs.readdirSync(dirPath);
+        return entries.filter(e => /^\([^)]+\)$/.test(e) && this.isDirectory(`${dirPath}/${e}`));
+      } catch {
+        return [];
+      }
+    };
 
     const tryPath = (
       dirPath: string,
       remainingSegments: string[],
       layouts: string[],
       params: Record<string, string | string[]>
-    ): { page: string; layouts: string[]; params: Record<string, string | string[]> } | null => {
+    ): AppRoute | null => {
       // Check for layout at current level
-      for (const ext of extensions) {
-        const layoutPath = `${dirPath}/layout${ext}`;
-        if (this.exists(layoutPath) && !layouts.includes(layoutPath)) {
-          layouts = [...layouts, layoutPath];
-        }
-      }
+      layouts = collectLayout(dirPath, layouts);
 
       if (remainingSegments.length === 0) {
-        // Look for page file
-        for (const ext of extensions) {
-          const pagePath = `${dirPath}/page${ext}`;
-          if (this.exists(pagePath)) {
-            return { page: pagePath, layouts, params };
+        // Look for page file directly
+        const page = findPage(dirPath);
+        if (page) {
+          return {
+            page, layouts, params,
+            loading: findNearestConventionFile(dirPath, 'loading') || undefined,
+            error: findNearestConventionFile(dirPath, 'error') || undefined,
+            notFound: findNearestConventionFile(dirPath, 'not-found') || undefined,
+          };
+        }
+
+        // Look for page inside route groups at this level
+        // e.g., /app/(marketing)/page.tsx resolves to /
+        const groups = getRouteGroups(dirPath);
+        for (const group of groups) {
+          const groupPath = `${dirPath}/${group}`;
+          const groupLayouts = collectLayout(groupPath, layouts);
+          const page = findPage(groupPath);
+          if (page) {
+            return {
+              page, layouts: groupLayouts, params,
+              loading: findNearestConventionFile(groupPath, 'loading') || undefined,
+              error: findNearestConventionFile(groupPath, 'error') || undefined,
+              notFound: findNearestConventionFile(groupPath, 'not-found') || undefined,
+            };
           }
         }
+
         return null;
       }
 
@@ -2165,7 +2671,56 @@ export class NextDevServer extends DevServer {
         if (result) return result;
       }
 
-      // Try dynamic segments
+      // Try inside route groups - route groups are transparent in URL
+      // e.g., /about might match /app/(marketing)/about/page.tsx
+      const groups = getRouteGroups(dirPath);
+      for (const group of groups) {
+        const groupPath = `${dirPath}/${group}`;
+        const groupLayouts = collectLayout(groupPath, layouts);
+
+        // Try exact match inside group
+        const groupExactPath = `${groupPath}/${current}`;
+        if (this.isDirectory(groupExactPath)) {
+          const result = tryPath(groupExactPath, rest, groupLayouts, params);
+          if (result) return result;
+        }
+
+        // Try dynamic segments inside group
+        try {
+          const groupEntries = this.vfs.readdirSync(groupPath);
+          for (const entry of groupEntries) {
+            if (entry.startsWith('[...') && entry.endsWith(']')) {
+              const dynamicPath = `${groupPath}/${entry}`;
+              if (this.isDirectory(dynamicPath)) {
+                const paramName = entry.slice(4, -1);
+                const newParams = { ...params, [paramName]: [current, ...rest] };
+                const result = tryPath(dynamicPath, [], groupLayouts, newParams);
+                if (result) return result;
+              }
+            } else if (entry.startsWith('[[...') && entry.endsWith(']]')) {
+              const dynamicPath = `${groupPath}/${entry}`;
+              if (this.isDirectory(dynamicPath)) {
+                const paramName = entry.slice(5, -2);
+                const newParams = { ...params, [paramName]: [current, ...rest] };
+                const result = tryPath(dynamicPath, [], groupLayouts, newParams);
+                if (result) return result;
+              }
+            } else if (entry.startsWith('[') && entry.endsWith(']') && !entry.includes('.')) {
+              const dynamicPath = `${groupPath}/${entry}`;
+              if (this.isDirectory(dynamicPath)) {
+                const paramName = entry.slice(1, -1);
+                const newParams = { ...params, [paramName]: current };
+                const result = tryPath(dynamicPath, rest, groupLayouts, newParams);
+                if (result) return result;
+              }
+            }
+          }
+        } catch {
+          // Group directory read failed
+        }
+      }
+
+      // Try dynamic segments at current level
       try {
         const entries = this.vfs.readdirSync(dirPath);
         for (const entry of entries) {
@@ -2173,9 +2728,17 @@ export class NextDevServer extends DevServer {
           if (entry.startsWith('[...') && entry.endsWith(']')) {
             const dynamicPath = `${dirPath}/${entry}`;
             if (this.isDirectory(dynamicPath)) {
-              // Extract param name from [...slug]
               const paramName = entry.slice(4, -1);
-              // Catch-all captures all remaining segments
+              const newParams = { ...params, [paramName]: [current, ...rest] };
+              const result = tryPath(dynamicPath, [], layouts, newParams);
+              if (result) return result;
+            }
+          }
+          // Handle optional catch-all routes [[...slug]]
+          else if (entry.startsWith('[[...') && entry.endsWith(']]')) {
+            const dynamicPath = `${dirPath}/${entry}`;
+            if (this.isDirectory(dynamicPath)) {
+              const paramName = entry.slice(5, -2);
               const newParams = { ...params, [paramName]: [current, ...rest] };
               const result = tryPath(dynamicPath, [], layouts, newParams);
               if (result) return result;
@@ -2185,7 +2748,6 @@ export class NextDevServer extends DevServer {
           else if (entry.startsWith('[') && entry.endsWith(']') && !entry.includes('.')) {
             const dynamicPath = `${dirPath}/${entry}`;
             if (this.isDirectory(dynamicPath)) {
-              // Extract param name from [id]
               const paramName = entry.slice(1, -1);
               const newParams = { ...params, [paramName]: current };
               const result = tryPath(dynamicPath, rest, layouts, newParams);
@@ -2217,7 +2779,7 @@ export class NextDevServer extends DevServer {
    * Generate HTML for App Router with nested layouts
    */
   private async generateAppRouterHtml(
-    route: { page: string; layouts: string[]; params: Record<string, string | string[]> },
+    route: AppRoute,
     pathname: string
   ): Promise<string> {
     // Use virtual server prefix for all file imports so the service worker can intercept them
@@ -2238,6 +2800,11 @@ export class NextDevServer extends DevServer {
     const layoutImports = route.layouts
       .map((layout, i) => `import Layout${i} from '${virtualPrefix}${layout}';`)
       .join('\n    ');
+
+    // Build convention file paths for the inline script
+    const loadingModulePath = route.loading ? `${virtualPrefix}${route.loading}` : '';
+    const errorModulePath = route.error ? `${virtualPrefix}${route.error}` : '';
+    const notFoundModulePath = route.notFound ? `${virtualPrefix}${route.notFound}` : '';
 
     // Build nested JSX: Layout0 > Layout1 > ... > Page
     let nestedJsx = 'React.createElement(Page)';
@@ -2286,7 +2853,8 @@ export class NextDevServer extends DevServer {
       "next/image": "${virtualPrefix}/_next/shims/image.js",
       "next/dynamic": "${virtualPrefix}/_next/shims/dynamic.js",
       "next/script": "${virtualPrefix}/_next/shims/script.js",
-      "next/font/google": "${virtualPrefix}/_next/shims/font/google.js"
+      "next/font/google": "${virtualPrefix}/_next/shims/font/google.js",
+      "next/font/local": "${virtualPrefix}/_next/shims/font/local.js"
     }
   }
   </script>
@@ -2303,6 +2871,14 @@ export class NextDevServer extends DevServer {
     // Initial route params (embedded by server for initial page load)
     const initialRouteParams = ${JSON.stringify(route.params)};
     const initialPathname = '${pathname}';
+
+    // Expose initial params for useParams() hook
+    window.__NEXT_ROUTE_PARAMS__ = initialRouteParams;
+
+    // Convention file paths (loading.tsx, error.tsx, not-found.tsx)
+    const loadingModulePath = '${loadingModulePath}';
+    const errorModulePath = '${errorModulePath}';
+    const notFoundModulePath = '${notFoundModulePath}';
 
     // Route params cache for client-side navigation
     const routeParamsCache = new Map();
@@ -2399,10 +2975,66 @@ export class NextDevServer extends DevServer {
       return layouts;
     }
 
+    // Load convention components (loading.tsx, error.tsx)
+    let LoadingComponent = null;
+    let ErrorComponent = null;
+    let NotFoundComponent = null;
+
+    async function loadConventionComponents() {
+      if (loadingModulePath) {
+        try {
+          const mod = await import(/* @vite-ignore */ loadingModulePath);
+          LoadingComponent = mod.default;
+        } catch (e) { /* loading.tsx not available */ }
+      }
+      if (errorModulePath) {
+        try {
+          const mod = await import(/* @vite-ignore */ errorModulePath);
+          ErrorComponent = mod.default;
+        } catch (e) { /* error.tsx not available */ }
+      }
+      if (notFoundModulePath) {
+        try {
+          const mod = await import(/* @vite-ignore */ notFoundModulePath);
+          NotFoundComponent = mod.default;
+        } catch (e) { /* not-found.tsx not available */ }
+      }
+    }
+    await loadConventionComponents();
+
+    // Error boundary class component
+    class ErrorBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { error: null };
+      }
+      static getDerivedStateFromError(error) {
+        return { error };
+      }
+      componentDidCatch(error, info) {
+        console.error('[ErrorBoundary]', error, info);
+      }
+      render() {
+        if (this.state.error) {
+          if (this.props.fallback) {
+            return React.createElement(this.props.fallback, {
+              error: this.state.error,
+              reset: () => this.setState({ error: null })
+            });
+          }
+          return React.createElement('div', { style: { color: 'red', padding: '20px' } },
+            'Error: ' + this.state.error.message
+          );
+        }
+        return this.props.children;
+      }
+    }
+
     // Wrapper for async Server Components
     function AsyncComponent({ component: Component, pathname, search }) {
       const [content, setContent] = React.useState(null);
       const [error, setError] = React.useState(null);
+      const [isNotFound, setIsNotFound] = React.useState(false);
 
       React.useEffect(() => {
         let cancelled = false;
@@ -2428,20 +3060,42 @@ export class NextDevServer extends DevServer {
               if (!cancelled) setContent(result);
             }
           } catch (e) {
-            console.error('[AsyncComponent] Error rendering:', e);
-            if (!cancelled) setError(e);
+            if (e && e.message === 'NEXT_NOT_FOUND') {
+              if (!cancelled) setIsNotFound(true);
+            } else {
+              console.error('[AsyncComponent] Error rendering:', e);
+              if (!cancelled) setError(e);
+            }
           }
         }
         render();
         return () => { cancelled = true; };
       }, [Component, pathname, search]);
 
+      if (isNotFound && NotFoundComponent) {
+        return React.createElement(NotFoundComponent);
+      }
+      if (isNotFound) {
+        return React.createElement('div', { style: { padding: '20px', textAlign: 'center' } },
+          React.createElement('h2', null, '404'),
+          React.createElement('p', null, 'This page could not be found.')
+        );
+      }
       if (error) {
+        if (ErrorComponent) {
+          return React.createElement(ErrorComponent, {
+            error: error,
+            reset: () => setError(null)
+          });
+        }
         return React.createElement('div', { style: { color: 'red', padding: '20px' } },
           'Error: ' + error.message
         );
       }
       if (!content) {
+        if (LoadingComponent) {
+          return React.createElement(LoadingComponent);
+        }
         return React.createElement('div', { style: { padding: '20px' } }, 'Loading...');
       }
       return content;
@@ -2475,7 +3129,8 @@ export class NextDevServer extends DevServer {
           if (newPath !== path) {
             console.log('[Router] Path changed, loading new page...');
             setPath(newPath);
-            const [P, L] = await Promise.all([loadPage(newPath), loadLayouts(newPath)]);
+            const [P, L, routeParams] = await Promise.all([loadPage(newPath), loadLayouts(newPath), extractRouteParams(newPath)]);
+            window.__NEXT_ROUTE_PARAMS__ = routeParams;
             console.log('[Router] Page loaded:', !!P, 'Layouts:', L.length);
             if (P) setPage(() => P);
             setLayouts(L);
@@ -2493,6 +3148,12 @@ export class NextDevServer extends DevServer {
       // Use AsyncComponent wrapper to handle async Server Components
       // Pass search to force re-render when query params change
       let content = React.createElement(AsyncComponent, { component: Page, pathname: path, search: search });
+
+      // Wrap with error boundary if error.tsx exists
+      if (ErrorComponent) {
+        content = React.createElement(ErrorBoundary, { fallback: ErrorComponent }, content);
+      }
+
       for (let i = layouts.length - 1; i >= 0; i--) {
         content = React.createElement(layouts[i], null, content);
       }
@@ -2683,7 +3344,8 @@ export class NextDevServer extends DevServer {
       "next/image": "${virtualPrefix}/_next/shims/image.js",
       "next/dynamic": "${virtualPrefix}/_next/shims/dynamic.js",
       "next/script": "${virtualPrefix}/_next/shims/script.js",
-      "next/font/google": "${virtualPrefix}/_next/shims/font/google.js"
+      "next/font/google": "${virtualPrefix}/_next/shims/font/google.js",
+      "next/font/local": "${virtualPrefix}/_next/shims/font/local.js"
     }
   }
   </script>
@@ -2910,7 +3572,9 @@ export class NextDevServer extends DevServer {
    */
   private async transformCode(code: string, filename: string): Promise<string> {
     if (!isBrowser) {
-      return code;
+      // Even in non-browser mode, strip/transform CSS imports
+      // so CSS module imports get replaced with class name objects
+      return this.stripCssImports(code, filename);
     }
 
     await initEsbuild();
@@ -2922,7 +3586,7 @@ export class NextDevServer extends DevServer {
 
     // Remove CSS imports before transformation - they are handled via <link> tags
     // CSS imports in ESM would fail with MIME type errors
-    const codeWithoutCssImports = this.stripCssImports(code);
+    const codeWithoutCssImports = this.stripCssImports(code, filename);
 
     // Resolve path aliases (e.g., @/ -> /) before transformation
     const codeWithResolvedAliases = this.resolvePathAliases(codeWithoutCssImports, filename);
@@ -2953,81 +3617,19 @@ export class NextDevServer extends DevServer {
     return codeWithCdnImports;
   }
 
-  /**
-   * Redirect bare npm package imports to esm.sh CDN
-   * e.g., import { Crisp } from "crisp-sdk-web" -> import { Crisp } from "https://esm.sh/crisp-sdk-web?external=react"
-   *
-   * IMPORTANT: We redirect ALL npm packages to esm.sh URLs (including React)
-   * because import maps don't work reliably for dynamically imported modules.
-   */
   private redirectNpmImports(code: string): string {
-    // Explicit mappings for common packages (ensures correct esm.sh URLs)
-    const explicitMappings: Record<string, string> = {
-      'react': 'https://esm.sh/react@18.2.0?dev',
-      'react/jsx-runtime': 'https://esm.sh/react@18.2.0&dev/jsx-runtime',
-      'react/jsx-dev-runtime': 'https://esm.sh/react@18.2.0&dev/jsx-dev-runtime',
-      'react-dom': 'https://esm.sh/react-dom@18.2.0?dev',
-      'react-dom/client': 'https://esm.sh/react-dom@18.2.0/client?dev',
-    };
-
-    // Packages that are local or have custom shims (NOT npm packages)
-    const localPackages = new Set([
-      'next/link', 'next/router', 'next/head', 'next/navigation',
-      'next/dynamic', 'next/image', 'next/script', 'next/font/google',
-      'convex/_generated/api'
-    ]);
-
-    // Pattern to match import statements with bare package specifiers
-    // Matches: from "package" or from 'package' where package doesn't start with . / or http
-    const importPattern = /(from\s*['"])([^'"./][^'"]*?)(['"])/g;
-
-    return code.replace(importPattern, (match, prefix, packageName, suffix) => {
-      // Skip if already a URL or local virtual path
-      if (packageName.startsWith('http://') ||
-          packageName.startsWith('https://') ||
-          packageName.startsWith('/__virtual__')) {
-        return match;
-      }
-
-      // Check explicit mappings first
-      if (explicitMappings[packageName]) {
-        return `${prefix}${explicitMappings[packageName]}${suffix}`;
-      }
-
-      // Skip local/shimmed packages (they're handled via import map or virtual paths)
-      if (localPackages.has(packageName)) {
-        return match;
-      }
-
-      // Check if it's a subpath import of a local package
-      const basePkg = packageName.includes('/') ? packageName.split('/')[0] : packageName;
-
-      // Handle scoped packages (@org/pkg)
-      const isScoped = basePkg.startsWith('@');
-      const scopedBasePkg = isScoped && packageName.includes('/')
-        ? packageName.split('/').slice(0, 2).join('/')
-        : basePkg;
-
-      if (localPackages.has(scopedBasePkg)) {
-        return match;
-      }
-
-      // Redirect to esm.sh with external=react to avoid bundling React twice
-      const esmUrl = `https://esm.sh/${packageName}?external=react`;
-      return `${prefix}${esmUrl}${suffix}`;
-    });
+    return _redirectNpmImports(code);
   }
 
-  /**
-   * Strip CSS imports from code (they are loaded via <link> tags instead)
-   * Handles: import './styles.css', import '../globals.css', etc.
-   */
-  private stripCssImports(code: string): string {
-    // Match import statements for CSS files (with or without semicolon)
-    // Handles: import './styles.css'; import "./globals.css" import '../path/file.css'
-    // NOTE: Don't match trailing whitespace (\s*) as it would consume newlines
-    // and break subsequent imports that start on the next line
-    return code.replace(/import\s+['"][^'"]+\.css['"]\s*;?/g, '');
+  private stripCssImports(code: string, currentFile?: string): string {
+    return _stripCssImports(code, currentFile, this.getCssModuleContext());
+  }
+
+  private getCssModuleContext(): CssModuleContext {
+    return {
+      readFile: (path: string) => this.vfs.readFileSync(path, 'utf-8'),
+      exists: (path: string) => this.exists(path),
+    };
   }
 
   /**
@@ -3062,94 +3664,11 @@ export class NextDevServer extends DevServer {
       return result.code;
     }
 
-    // Simple ESM to CJS transform for Node.js/test environment
-    let transformed = codeWithResolvedAliases;
-
-    // Convert: import X from 'Y' -> const X = require('Y')
-    transformed = transformed.replace(
-      /import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/g,
-      'const $1 = require("$2")'
-    );
-
-    // Convert: import { X } from 'Y' -> const { X } = require('Y')
-    transformed = transformed.replace(
-      /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g,
-      'const {$1} = require("$2")'
-    );
-
-    // Convert: export default function X -> module.exports = function X
-    transformed = transformed.replace(
-      /export\s+default\s+function\s+(\w+)/g,
-      'module.exports = function $1'
-    );
-
-    // Convert: export default function -> module.exports = function
-    transformed = transformed.replace(
-      /export\s+default\s+function\s*\(/g,
-      'module.exports = function('
-    );
-
-    // Convert: export default X -> module.exports = X
-    transformed = transformed.replace(
-      /export\s+default\s+/g,
-      'module.exports = '
-    );
-
-    return transformed;
+    return transformEsmToCjsSimple(codeWithResolvedAliases);
   }
 
-  /**
-   * Add React Refresh registration to transformed code
-   */
   private addReactRefresh(code: string, filename: string): string {
-    const components: string[] = [];
-
-    const funcDeclRegex = /(?:^|\n)(?:export\s+)?function\s+([A-Z][a-zA-Z0-9]*)\s*\(/g;
-    let match;
-    while ((match = funcDeclRegex.exec(code)) !== null) {
-      if (!components.includes(match[1])) {
-        components.push(match[1]);
-      }
-    }
-
-    const arrowRegex = /(?:^|\n)(?:export\s+)?(?:const|let|var)\s+([A-Z][a-zA-Z0-9]*)\s*=/g;
-    while ((match = arrowRegex.exec(code)) !== null) {
-      if (!components.includes(match[1])) {
-        components.push(match[1]);
-      }
-    }
-
-    if (components.length === 0) {
-      return `// HMR Setup
-import.meta.hot = window.__vite_hot_context__("${filename}");
-
-${code}
-
-if (import.meta.hot) {
-  import.meta.hot.accept();
-}
-`;
-    }
-
-    const registrations = components
-      .map(name => `  $RefreshReg$(${name}, "${filename} ${name}");`)
-      .join('\n');
-
-    return `// HMR Setup
-import.meta.hot = window.__vite_hot_context__("${filename}");
-
-${code}
-
-// React Refresh Registration
-if (import.meta.hot) {
-${registrations}
-  import.meta.hot.accept(() => {
-    if (window.$RefreshRuntime$) {
-      window.$RefreshRuntime$.performReactRefresh();
-    }
-  });
-}
-`;
+    return _addReactRefresh(code, filename);
   }
 
   /**
