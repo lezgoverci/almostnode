@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+dist-site/
 
 # Test results
 test-results/

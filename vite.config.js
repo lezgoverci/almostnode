@@ -64,10 +64,23 @@ export default defineConfig({
     exclude: ['brotli-wasm', 'convex'],
     esbuildOptions: { target: 'esnext' },
   },
+  worker: {
+    format: 'es',
+  },
   build: {
     commonjsOptions: {
       transformMixedEsModules: true,
     },
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        'examples/index': resolve(__dirname, 'examples/index.html'),
+        'examples/next-demo': resolve(__dirname, 'examples/next-demo.html'),
+        'examples/vite-demo': resolve(__dirname, 'examples/vite-demo.html'),
+        'examples/express-demo': resolve(__dirname, 'examples/express-demo.html'),
+      },
+    },
+    outDir: 'dist-site',
   },
   assetsInclude: ['**/*.wasm'],
 });

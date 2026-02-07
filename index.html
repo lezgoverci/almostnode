@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>almostnode - Node.js in your browser</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        background: #0a0a0f;
+        color: #e2e8f0;
+        min-height: 100vh;
+      }
+      .hero {
+        text-align: center;
+        padding: 80px 24px 48px;
+        max-width: 720px;
+        margin: 0 auto;
+      }
+      .hero h1 {
+        font-size: 3rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 16px;
+      }
+      .hero p {
+        font-size: 1.25rem;
+        color: #94a3b8;
+        line-height: 1.6;
+        margin-bottom: 32px;
+      }
+      .badges {
+        display: flex;
+        gap: 8px;
+        justify-content: center;
+        margin-bottom: 48px;
+        flex-wrap: wrap;
+      }
+      .badges a { text-decoration: none; }
+      .badges img { height: 24px; }
+      .demos {
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 0 24px 80px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+      }
+      .card {
+        background: #141420;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        padding: 28px;
+        text-decoration: none;
+        color: inherit;
+        transition: border-color 0.2s, transform 0.2s;
+      }
+      .card:hover {
+        border-color: #475569;
+        transform: translateY(-2px);
+      }
+      .card h2 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+        color: #f1f5f9;
+      }
+      .card p {
+        font-size: 0.9rem;
+        color: #64748b;
+        line-height: 1.5;
+      }
+      .card .tag {
+        display: inline-block;
+        margin-top: 12px;
+        padding: 3px 10px;
+        border-radius: 6px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        background: #1e293b;
+        color: #94a3b8;
+      }
+      footer {
+        text-align: center;
+        padding: 32px 24px;
+        color: #475569;
+        font-size: 0.85rem;
+        border-top: 1px solid #1e293b;
+      }
+      footer a { color: #60a5fa; text-decoration: none; }
+      footer a:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="hero">
+      <h1>almostnode</h1>
+      <p>Run Node.js, Next.js, Vite, and Express entirely in the browser. No server required.</p>
+      <div class="badges">
+        <a href="https://www.npmjs.com/package/almostnode"><img src="https://img.shields.io/npm/v/almostnode?style=flat-square&color=4f46e5" alt="npm"></a>
+        <a href="https://github.com/Macaly/almostnode"><img src="https://img.shields.io/github/stars/Macaly/almostnode?style=flat-square&color=4f46e5" alt="GitHub stars"></a>
+        <a href="https://github.com/Macaly/almostnode/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Macaly/almostnode?style=flat-square&color=4f46e5" alt="License"></a>
+      </div>
+    </div>
+    <div class="demos">
+      <a class="card" href="./examples/index.html">
+        <h2>HTTP Server</h2>
+        <p>Run a Node.js HTTP server in the browser. Edit the code, hit Run, and see it serve pages live.</p>
+        <span class="tag">http &middot; require()</span>
+      </a>
+      <a class="card" href="./examples/next-demo.html">
+        <h2>Next.js App</h2>
+        <p>A full Next.js development server with App Router, file-based routing, and HMR &mdash; all client-side.</p>
+        <span class="tag">next.js &middot; app router &middot; hmr</span>
+      </a>
+      <a class="card" href="./examples/vite-demo.html">
+        <h2>Vite Dev Server</h2>
+        <p>Vite running in the browser with React, hot module replacement, and npm package installation.</p>
+        <span class="tag">vite &middot; react &middot; hmr</span>
+      </a>
+      <a class="card" href="./examples/express-demo.html">
+        <h2>Express Server</h2>
+        <p>Express.js with routing, middleware, and JSON APIs &mdash; installed and running entirely in your browser.</p>
+        <span class="tag">express &middot; npm install</span>
+      </a>
+    </div>
+    <footer>
+      <a href="https://github.com/Macaly/almostnode">GitHub</a> &middot;
+      <a href="https://www.npmjs.com/package/almostnode">npm</a> &middot;
+      MIT License
+    </footer>
+  </body>
+</html>
