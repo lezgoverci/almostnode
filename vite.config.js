@@ -1,9 +1,13 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { resolve } from 'path';
 import wasm from 'vite-plugin-wasm';
 import topLevelAwait from 'vite-plugin-top-level-await';
 
 const isTest = process.env.VITEST === 'true';
+if (isTest) {
+  const env = loadEnv('', process.cwd(), '');
+  Object.assign(process.env, env);
+}
 export default defineConfig({
   base: '/',
   test: {

@@ -129,7 +129,7 @@ export class VirtualFSAdapter implements IFileSystem {
       isFile,
       isDirectory,
       isSymbolicLink: stats.isSymbolicLink(),
-      mode: isDirectory ? 0o755 : isSymbolicLink ? 0o777 : 0o644,
+      mode: isDirectory ? 0o755 : stats.isSymbolicLink() ? 0o777 : 0o644,
       size,
       mtime: stats.mtime,
     };
