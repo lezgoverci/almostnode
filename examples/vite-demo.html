@@ -214,6 +214,7 @@
         } catch (e) {
           setStatus('error', 'Install failed');
           log(`Install error: ${e.message}`, 'error');
+          console.error(e);
           installBtn.disabled = false;
         }
       }
@@ -235,6 +236,7 @@
         } catch (e) {
           setStatus('error', 'Preview failed');
           log(`Preview error: ${e.message}`, 'error');
+          console.error(e);
           runBtn.disabled = false;
         }
       }

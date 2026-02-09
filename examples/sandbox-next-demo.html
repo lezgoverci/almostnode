@@ -217,6 +217,7 @@ module.exports = {
         } catch (error) {
           setStatus('error', 'Failed');
           logToConsole('Failed: ' + error.message, 'error');
+          console.error(error);
         }
       }
 
@@ -234,6 +235,7 @@ module.exports = {
         } catch (error) {
           logToConsole('Error: ' + error.message, 'error');
           logToResult('Error: ' + error.message, 'error');
+          console.error(error);
         } finally {
           runBtn.disabled = false;
           runBtn.textContent = 'Run in Sandbox';

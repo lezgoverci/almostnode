@@ -347,6 +347,7 @@ export default function ${jsName.charAt(0).toUpperCase() + jsName.slice(1)}Demo(
           log(`Navigate to ${routePath} to see the demo.`);
         } catch (error) {
           log(`Failed: ${error.message}`, 'error');
+          console.error(error);
         } finally {
           installBtn.disabled = false;
           installBtn.textContent = 'Install';
@@ -461,6 +462,7 @@ export default function ${jsName.charAt(0).toUpperCase() + jsName.slice(1)}Demo(
         } catch (e) {
           setStatus('error', 'Error');
           log(`Init error: ${e.message}`, 'error');
+          console.error(e);
         }
       }
 
@@ -481,6 +483,7 @@ export default function ${jsName.charAt(0).toUpperCase() + jsName.slice(1)}Demo(
         } catch (e) {
           setStatus('error', 'Preview failed');
           log(`Error: ${e.message}`, 'error');
+          console.error(e);
           runBtn.disabled = false;
         }
       }

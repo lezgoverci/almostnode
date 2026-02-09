@@ -166,6 +166,9 @@ textarea::selection {
 .terminal .t-log { color: var(--text); }
 .terminal .hmr { color: var(--accent); font-weight: 600; }
 .terminal .error { color: var(--error); }
+.terminal .warn { color: var(--warn); }
+.terminal .success { color: var(--accent); }
+.terminal .info { color: var(--text-dim); }
 
 /* ── Buttons ── */
 .btn {
@@ -247,6 +250,7 @@ textarea::selection {
   width: 5px;
   height: 5px;
   background: var(--text-dim);
+  border-radius: 50%;
   flex-shrink: 0;
 }
 .file-tab.active .dot { background: var(--accent); }
@@ -256,6 +260,7 @@ textarea::selection {
   width: 6px;
   height: 6px;
   background: var(--border-bright);
+  border-radius: 50%;
   flex-shrink: 0;
 }
 .status-dot.running { background: var(--accent); }
