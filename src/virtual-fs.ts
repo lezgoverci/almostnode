@@ -6,9 +6,10 @@ import type { VFSSnapshot, VFSFileEntry } from './runtime-interface';
 import { uint8ToBase64, base64ToUint8 } from './utils/binary-encoding';
 
 export interface FSNode {
-  type: 'file' | 'directory';
+  type: 'file' | 'directory' | 'symlink';
   content?: Uint8Array;
   children?: Map<string, FSNode>;
+  target?: string; // Target path for symlinks
   mtime: number;
 }
 
@@ -178,6 +179,9 @@ export class VirtualFS {
         content = uint8ToBase64(node.content);
       }
       files.push({ path, type: 'file', content });
+    } else if (node.type === 'symlink') {
+      // Store symlink target in content field
+      files.push({ path, type: 'symlink' as 'file' | 'directory', content: node.target });
     } else if (node.type === 'directory') {
       files.push({ path, type: 'directory' });
       if (node.children) {
@@ -326,6 +330,31 @@ export class VirtualFS {
   }
 
   /**
+   * Get node at path, following symlinks to their target
+   */
+  private getNodeFollowingSymlinks(path: string, depth: number = 0): FSNode | undefined {
+    if (depth > 40) {
+      throw new Error('ELOOP: too many symbolic links encountered');
+    }
+
+    const node = this.getNode(path);
+    if (!node) {
+      return undefined;
+    }
+
+    if (node.type === 'symlink' && node.target) {
+      // Resolve symlink target relative to the symlink's directory
+      const symlinkDir = this.getParentPath(path);
+      const targetPath = node.target.startsWith('/')
+        ? node.target
+        : this.normalizePath(symlinkDir + '/' + node.target);
+      return this.getNodeFollowingSymlinks(targetPath, depth + 1);
+    }
+
+    return node;
+  }
+
+  /**
    * Get or create directory at path (for mkdir -p behavior)
    */
   private ensureDirectory(path: string): FSNode {
@@ -359,21 +388,72 @@ export class VirtualFS {
   }
 
   /**
-   * Get stats for path
+   * Create a symbolic link
+   */
+  symlinkSync(target: string, linkPath: string): void {
+    const normalized = this.normalizePath(linkPath);
+    const parentPath = this.getParentPath(normalized);
+    const basename = this.getBasename(normalized);
+
+    if (!basename) {
+      throw new Error(`EISDIR: illegal operation on a directory, '${linkPath}'`);
+    }
+
+    const parent = this.ensureDirectory(parentPath);
+
+    if (parent.children!.has(basename)) {
+      throw createNodeError('EEXIST', 'symlink', linkPath);
+    }
+
+    parent.children!.set(basename, {
+      type: 'symlink',
+      target,
+      mtime: Date.now(),
+    });
+
+    // Notify watchers
+    this.notifyWatchers(normalized, 'rename');
+  }
+
+  /**
+   * Read the target of a symbolic link
+   */
+  readlinkSync(path: string): string {
+    const node = this.getNode(path);
+
+    if (!node) {
+      throw createNodeError('ENOENT', 'readlink', path);
+    }
+
+    if (node.type !== 'symlink') {
+      const err = new Error(`EINVAL: invalid argument, readlink '${path}'`) as NodeError;
+      err.code = 'EINVAL';
+      err.errno = -22;
+      err.syscall = 'readlink';
+      err.path = path;
+      throw err;
+    }
+
+    return node.target || '';
+  }
+
+  /**
+   * Get stats for path (follows symlinks)
    */
   statSync(path: string): Stats {
-    const node = this.getNode(path);
+    const node = this.getNodeFollowingSymlinks(path);
     if (!node) {
       throw createNodeError('ENOENT', 'stat', path);
     }
 
-    const size = node.type === 'file' ? (node.content?.length || 0) : 0;
+    const size = node.type === 'file' ? (node.content?.length || 0) :
+      node.type === 'symlink' ? (node.target?.length || 0) : 0;
     const mtime = node.mtime;
 
     return {
       isFile: () => node.type === 'file',
       isDirectory: () => node.type === 'directory',
-      isSymbolicLink: () => false,
+      isSymbolicLink: () => false, // stat follows symlinks, so never returns true
       isBlockDevice: () => false,
       isCharacterDevice: () => false,
       isFIFO: () => false,
@@ -400,10 +480,45 @@ export class VirtualFS {
   }
 
   /**
-   * lstatSync - same as statSync for our virtual FS (no symlinks)
+   * lstatSync - returns stats without following symlinks
    */
   lstatSync(path: string): Stats {
-    return this.statSync(path);
+    const node = this.getNode(path);
+    if (!node) {
+      throw createNodeError('ENOENT', 'lstat', path);
+    }
+
+    const size = node.type === 'file' ? (node.content?.length || 0) :
+      node.type === 'symlink' ? (node.target?.length || 0) : 0;
+    const mtime = node.mtime;
+
+    return {
+      isFile: () => node.type === 'file',
+      isDirectory: () => node.type === 'directory',
+      isSymbolicLink: () => node.type === 'symlink',
+      isBlockDevice: () => false,
+      isCharacterDevice: () => false,
+      isFIFO: () => false,
+      isSocket: () => false,
+      size,
+      mode: node.type === 'directory' ? 0o755 : node.type === 'symlink' ? 0o777 : 0o644,
+      mtime: new Date(mtime),
+      atime: new Date(mtime),
+      ctime: new Date(mtime),
+      birthtime: new Date(mtime),
+      mtimeMs: mtime,
+      atimeMs: mtime,
+      ctimeMs: mtime,
+      birthtimeMs: mtime,
+      nlink: 1,
+      uid: 1000,
+      gid: 1000,
+      dev: 0,
+      ino: 0,
+      rdev: 0,
+      blksize: 4096,
+      blocks: Math.ceil(size / 512),
+    };
   }
 
   /**
@@ -709,7 +824,7 @@ export class VirtualFS {
 
     // Create watcher entry
     const entry: WatcherEntry = {
-      listener: actualListener || (() => {}),
+      listener: actualListener || (() => { }),
       recursive: options.recursive || false,
       closed: false,
     };

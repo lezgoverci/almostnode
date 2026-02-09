@@ -16,8 +16,8 @@ if (typeof globalThis.process === 'undefined') {
     platform: 'linux',
     version: 'v18.0.0',
     versions: { node: '18.0.0' },
-    stdout: { write: () => {} },
-    stderr: { write: () => {} },
+    stdout: { write: () => { } },
+    stderr: { write: () => { } },
   };
 }
 
@@ -27,6 +27,9 @@ import { Readable, Writable, Buffer } from './stream';
 import type { VirtualFS } from '../virtual-fs';
 import { VirtualFSAdapter } from './vfs-adapter';
 import { Runtime } from '../runtime';
+import git from 'isomorphic-git';
+import http from 'isomorphic-git/http/web';
+import { createIsomorphicGitFs, getAuthFromEnv, DEFAULT_CORS_PROXY } from './git-adapter';
 
 // Singleton bash instance - uses VFS adapter for two-way file sync
 let bashInstance: Bash | null = null;
@@ -154,6 +157,287 @@ export function initChildProcess(vfs: VirtualFS): void {
     }
   });
 
+  // Create custom 'git' command using isomorphic-git
+  const gitCommand = defineCommand('git', async (args, ctx) => {
+    if (!vfsAdapter) {
+      return { stdout: '', stderr: 'VFS not initialized\n', exitCode: 1 };
+    }
+
+    const subcommand = args[0];
+    const subArgs = args.slice(1);
+    const fs = createIsomorphicGitFs(vfsAdapter);
+    const dir = ctx.cwd;
+    const author = {
+      name: ctx.env.get('GIT_AUTHOR_NAME') || ctx.env.get('USER') || 'User',
+      email: ctx.env.get('GIT_AUTHOR_EMAIL') || 'user@localhost',
+    };
+    const corsProxy = ctx.env.get('GIT_CORS_PROXY') || DEFAULT_CORS_PROXY;
+    const onAuth = () => getAuthFromEnv(ctx.env);
+
+    try {
+      switch (subcommand) {
+        case 'init': {
+          const bare = subArgs.includes('--bare');
+          const targetDir = subArgs.find(a => !a.startsWith('-')) || dir;
+          await git.init({ fs, dir: targetDir, bare });
+          return { stdout: `Initialized empty Git repository in ${targetDir}/.git/\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'clone': {
+          const url = subArgs.find(a => !a.startsWith('-'));
+          if (!url) {
+            return { stdout: '', stderr: 'Usage: git clone <url> [directory]\n', exitCode: 1 };
+          }
+          const targetDir = subArgs.find((a, i) => i > 0 && !a.startsWith('-')) || url.split('/').pop()?.replace('.git', '') || 'repo';
+          const depth = subArgs.includes('--depth') ? parseInt(subArgs[subArgs.indexOf('--depth') + 1]) : undefined;
+          const singleBranch = subArgs.includes('--single-branch');
+
+          await git.clone({
+            fs, http, dir: targetDir, url, corsProxy,
+            depth, singleBranch, onAuth,
+            onProgress: (event) => {
+              // Progress could be streamed in a future enhancement
+            },
+          });
+          return { stdout: `Cloning into '${targetDir}'...\ndone.\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'status': {
+          const matrix = await git.statusMatrix({ fs, dir });
+          let stdout = '';
+          const staged: string[] = [];
+          const modified: string[] = [];
+          const untracked: string[] = [];
+
+          for (const [filepath, head, workdir, stage] of matrix) {
+            if (head === 0 && workdir === 2 && stage === 0) untracked.push(filepath);
+            else if (head === 1 && workdir === 2 && stage === 1) modified.push(filepath);
+            else if (head === 1 && workdir === 2 && stage === 2) staged.push(filepath);
+            else if (head === 0 && workdir === 2 && stage === 2) staged.push(filepath);
+            else if (head === 1 && workdir === 0 && stage === 0) staged.push(filepath); // deleted, staged
+          }
+
+          if (staged.length > 0) {
+            stdout += 'Changes to be committed:\n';
+            staged.forEach(f => stdout += `  new file:   ${f}\n`);
+            stdout += '\n';
+          }
+          if (modified.length > 0) {
+            stdout += 'Changes not staged for commit:\n';
+            modified.forEach(f => stdout += `  modified:   ${f}\n`);
+            stdout += '\n';
+          }
+          if (untracked.length > 0) {
+            stdout += 'Untracked files:\n';
+            untracked.forEach(f => stdout += `  ${f}\n`);
+            stdout += '\n';
+          }
+          if (!stdout) stdout = 'nothing to commit, working tree clean\n';
+
+          return { stdout, stderr: '', exitCode: 0 };
+        }
+
+        case 'add': {
+          const files = subArgs.filter(a => !a.startsWith('-'));
+          if (files.length === 0) {
+            return { stdout: '', stderr: 'Nothing specified, nothing added.\n', exitCode: 0 };
+          }
+          for (const filepath of files) {
+            if (filepath === '.') {
+              // Add all files
+              const matrix = await git.statusMatrix({ fs, dir });
+              for (const [f] of matrix) {
+                await git.add({ fs, dir, filepath: f });
+              }
+            } else {
+              await git.add({ fs, dir, filepath });
+            }
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+
+        case 'commit': {
+          const msgIndex = subArgs.indexOf('-m');
+          const message = msgIndex >= 0 ? subArgs[msgIndex + 1] : 'No message';
+          const sha = await git.commit({ fs, dir, message, author });
+          return { stdout: `[${sha.slice(0, 7)}] ${message}\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'log': {
+          const depth = subArgs.includes('-n') ? parseInt(subArgs[subArgs.indexOf('-n') + 1]) : 10;
+          const commits = await git.log({ fs, dir, depth });
+          let stdout = '';
+          for (const commit of commits) {
+            stdout += `commit ${commit.oid}\n`;
+            stdout += `Author: ${commit.commit.author.name} <${commit.commit.author.email}>\n`;
+            stdout += `Date:   ${new Date(commit.commit.author.timestamp * 1000).toUTCString()}\n`;
+            stdout += `\n    ${commit.commit.message}\n\n`;
+          }
+          return { stdout, stderr: '', exitCode: 0 };
+        }
+
+        case 'push': {
+          const remote = subArgs.find(a => !a.startsWith('-')) || 'origin';
+          const ref = subArgs.find((a, i) => i > 0 && !a.startsWith('-'));
+          await git.push({ fs, http, dir, remote, ref, corsProxy, onAuth });
+          return { stdout: `Pushed to ${remote}\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'pull': {
+          const remote = subArgs.find(a => !a.startsWith('-')) || 'origin';
+          const ref = subArgs.find((a, i) => i > 0 && !a.startsWith('-'));
+          await git.pull({ fs, http, dir, remote, ref, corsProxy, onAuth, author });
+          return { stdout: `Pulled from ${remote}\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'fetch': {
+          const remote = subArgs.find(a => !a.startsWith('-')) || 'origin';
+          await git.fetch({ fs, http, dir, remote, corsProxy, onAuth });
+          return { stdout: `Fetched from ${remote}\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'branch': {
+          if (subArgs.includes('-a') || subArgs.includes('--all')) {
+            const local = await git.listBranches({ fs, dir });
+            const remote = await git.listBranches({ fs, dir, remote: 'origin' });
+            let stdout = local.map(b => `  ${b}\n`).join('');
+            stdout += remote.map(b => `  remotes/origin/${b}\n`).join('');
+            return { stdout, stderr: '', exitCode: 0 };
+          }
+          if (subArgs.includes('-d') || subArgs.includes('-D')) {
+            const branchName = subArgs.find(a => !a.startsWith('-'));
+            if (branchName) {
+              await git.deleteBranch({ fs, dir, ref: branchName });
+              return { stdout: `Deleted branch ${branchName}\n`, stderr: '', exitCode: 0 };
+            }
+          }
+          if (subArgs.length > 0 && !subArgs[0].startsWith('-')) {
+            await git.branch({ fs, dir, ref: subArgs[0] });
+            return { stdout: '', stderr: '', exitCode: 0 };
+          }
+          const branches = await git.listBranches({ fs, dir });
+          const current = await git.currentBranch({ fs, dir });
+          const stdout = branches.map(b => b === current ? `* ${b}\n` : `  ${b}\n`).join('');
+          return { stdout, stderr: '', exitCode: 0 };
+        }
+
+        case 'checkout': {
+          const ref = subArgs.find(a => !a.startsWith('-'));
+          if (!ref) {
+            return { stdout: '', stderr: 'Usage: git checkout <branch>\n', exitCode: 1 };
+          }
+          if (subArgs.includes('-b')) {
+            await git.branch({ fs, dir, ref });
+          }
+          await git.checkout({ fs, dir, ref });
+          return { stdout: `Switched to branch '${ref}'\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'merge': {
+          const theirs = subArgs.find(a => !a.startsWith('-'));
+          if (!theirs) {
+            return { stdout: '', stderr: 'Usage: git merge <branch>\n', exitCode: 1 };
+          }
+          await git.merge({ fs, dir, theirs, author });
+          return { stdout: `Merged ${theirs}\n`, stderr: '', exitCode: 0 };
+        }
+
+        case 'diff': {
+          // Simple diff showing modified files
+          const matrix = await git.statusMatrix({ fs, dir });
+          let stdout = '';
+          for (const [filepath, head, workdir] of matrix) {
+            if (head !== workdir) {
+              stdout += `diff --git a/${filepath} b/${filepath}\n`;
+            }
+          }
+          if (!stdout) stdout = 'No changes\n';
+          return { stdout, stderr: '', exitCode: 0 };
+        }
+
+        case 'remote': {
+          if (subArgs[0] === 'add') {
+            const name = subArgs[1];
+            const url = subArgs[2];
+            if (!name || !url) {
+              return { stdout: '', stderr: 'Usage: git remote add <name> <url>\n', exitCode: 1 };
+            }
+            await git.addRemote({ fs, dir, remote: name, url });
+            return { stdout: '', stderr: '', exitCode: 0 };
+          }
+          if (subArgs[0] === 'remove' || subArgs[0] === 'rm') {
+            const name = subArgs[1];
+            if (!name) {
+              return { stdout: '', stderr: 'Usage: git remote remove <name>\n', exitCode: 1 };
+            }
+            await git.deleteRemote({ fs, dir, remote: name });
+            return { stdout: '', stderr: '', exitCode: 0 };
+          }
+          const remotes = await git.listRemotes({ fs, dir });
+          if (subArgs.includes('-v')) {
+            const stdout = remotes.map(r => `${r.remote}\t${r.url} (fetch)\n${r.remote}\t${r.url} (push)\n`).join('');
+            return { stdout, stderr: '', exitCode: 0 };
+          }
+          const stdout = remotes.map(r => `${r.remote}\n`).join('');
+          return { stdout, stderr: '', exitCode: 0 };
+        }
+
+        case 'config': {
+          const path = subArgs.find(a => !a.startsWith('-'));
+          const value = subArgs.find((a, i) => i > 0 && !a.startsWith('-'));
+          if (path && value) {
+            await git.setConfig({ fs, dir, path, value });
+            return { stdout: '', stderr: '', exitCode: 0 };
+          }
+          if (path) {
+            const val = await git.getConfig({ fs, dir, path });
+            return { stdout: val ? `${val}\n` : '', stderr: '', exitCode: 0 };
+          }
+          return { stdout: '', stderr: 'Usage: git config <key> [value]\n', exitCode: 1 };
+        }
+
+        case '--version':
+        case 'version': {
+          return { stdout: 'git version 2.x (isomorphic-git)\n', stderr: '', exitCode: 0 };
+        }
+
+        case '--help':
+        case 'help':
+        case undefined: {
+          return {
+            stdout: `usage: git <command> [<args>]
+
+Commands:
+  init        Create an empty Git repository
+  clone       Clone a repository
+  status      Show the working tree status
+  add         Add file contents to the index
+  commit      Record changes to the repository
+  log         Show commit logs
+  push        Update remote refs
+  pull        Fetch from and integrate with remote
+  fetch       Download objects and refs from remote
+  branch      List, create, or delete branches
+  checkout    Switch branches
+  merge       Join two or more development histories
+  diff        Show changes between commits
+  remote      Manage set of tracked repositories
+  config      Get and set repository options
+`,
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+
+        default:
+          return { stdout: '', stderr: `git: '${subcommand}' is not a git command\n`, exitCode: 1 };
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      return { stdout: '', stderr: `fatal: ${errorMsg}\n`, exitCode: 128 };
+    }
+  });
+
   bashInstance = new Bash({
     fs: vfsAdapter,
     cwd: '/',
@@ -163,7 +447,7 @@ export function initChildProcess(vfs: VirtualFS): void {
       PATH: '/usr/local/bin:/usr/bin:/bin:/node_modules/.bin',
       NODE_ENV: 'development',
     },
-    customCommands: [nodeCommand, convexCommand],
+    customCommands: [nodeCommand, convexCommand, gitCommand],
   });
 }
 
@@ -307,8 +591,8 @@ export function spawn(
   // Build the full command
   const fullCommand = spawnArgs.length > 0
     ? `${command} ${spawnArgs.map(arg =>
-        arg.includes(' ') ? `"${arg}"` : arg
-      ).join(' ')}`
+      arg.includes(' ') ? `"${arg}"` : arg
+    ).join(' ')}`
     : command;
 
   // Execute asynchronously
