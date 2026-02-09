@@ -40,7 +40,7 @@ let currentVfs: VirtualFS | null = null;
  * Initialize the child_process shim with a VirtualFS instance
  * Creates a single Bash instance with VirtualFSAdapter for efficient file access
  */
-export function initChildProcess(vfs: VirtualFS): void {
+export function initChildProcess(vfs: VirtualFS, customEnv?: Record<string, string>): void {
   currentVfs = vfs;
   vfsAdapter = new VirtualFSAdapter(vfs);
 
@@ -184,22 +184,41 @@ export function initChildProcess(vfs: VirtualFS): void {
         }
 
         case 'clone': {
-          const url = subArgs.find(a => !a.startsWith('-'));
+          // Parse arguments, skipping option values
+          const optionsWithValues = ['--depth', '--branch', '-b', '--origin', '-o'];
+          const positionalArgs: string[] = [];
+          for (let i = 0; i < subArgs.length; i++) {
+            const arg = subArgs[i];
+            if (arg.startsWith('-')) {
+              // Skip the next arg if this option takes a value
+              if (optionsWithValues.includes(arg)) {
+                i++; // skip value
+              }
+            } else {
+              positionalArgs.push(arg);
+            }
+          }
+
+          const url = positionalArgs[0];
           if (!url) {
             return { stdout: '', stderr: 'Usage: git clone <url> [directory]\n', exitCode: 1 };
           }
-          const targetDir = subArgs.find((a, i) => i > 0 && !a.startsWith('-')) || url.split('/').pop()?.replace('.git', '') || 'repo';
-          const depth = subArgs.includes('--depth') ? parseInt(subArgs[subArgs.indexOf('--depth') + 1]) : undefined;
+          const targetDirName = positionalArgs[1] || url.split('/').pop()?.replace('.git', '') || 'repo';
+          const depthIdx = subArgs.indexOf('--depth');
+          const depth = depthIdx >= 0 ? parseInt(subArgs[depthIdx + 1]) : undefined;
           const singleBranch = subArgs.includes('--single-branch');
 
+          // Use absolute path by joining CWD with target directory
+          const absoluteTargetDir = targetDirName.startsWith('/') ? targetDirName : `${dir}/${targetDirName}`.replace(/\/+/g, '/');
+
           await git.clone({
-            fs, http, dir: targetDir, url, corsProxy,
+            fs, http, dir: absoluteTargetDir, url, corsProxy,
             depth, singleBranch, onAuth,
-            onProgress: (event) => {
+            onProgress: (_event: unknown) => {
               // Progress could be streamed in a future enhancement
             },
           });
-          return { stdout: `Cloning into '${targetDir}'...\ndone.\n`, stderr: '', exitCode: 0 };
+          return { stdout: `Cloning into '${targetDirName}'...\ndone.\n`, stderr: '', exitCode: 0 };
         }
 
         case 'status': {
@@ -446,6 +465,7 @@ Commands:
       USER: 'user',
       PATH: '/usr/local/bin:/usr/bin:/bin:/node_modules/.bin',
       NODE_ENV: 'development',
+      ...customEnv,
     },
     customCommands: [nodeCommand, convexCommand, gitCommand],
   });

@@ -258,7 +258,7 @@ const prettierShim = {
   check: (_source: string, _options?: unknown) => Promise.resolve(true),
   resolveConfig: () => Promise.resolve(null),
   resolveConfigFile: () => Promise.resolve(null),
-  clearConfigCache: () => {},
+  clearConfigCache: () => { },
   getFileInfo: () => Promise.resolve({ ignored: false, inferredParser: null }),
   getSupportInfo: () => Promise.resolve({ languages: [], options: [] }),
   version: '3.0.0',
@@ -603,7 +603,7 @@ function createRequire(
       // BUT skip .cjs files and already-bundled CJS code
       const isCjsFile = resolvedPath.endsWith('.cjs');
       const isAlreadyBundledCjs = code.startsWith('"use strict";\nvar __') ||
-                                   code.startsWith("'use strict';\nvar __");
+        code.startsWith("'use strict';\nvar __");
 
       const hasEsmImport = /\bimport\s+[\w{*'"]/m.test(code);
       const hasEsmExport = /\bexport\s+(?:default|const|let|var|function|class|{|\*)/m.test(code);
@@ -774,11 +774,11 @@ ${code}
 
     // Also check if resolved path is to rollup, esbuild, or prettier in node_modules
     if (resolved.includes('/node_modules/rollup/') ||
-        resolved.includes('/node_modules/@rollup/')) {
+      resolved.includes('/node_modules/@rollup/')) {
       return builtinModules['rollup'];
     }
     if (resolved.includes('/node_modules/esbuild/') ||
-        resolved.includes('/node_modules/@esbuild/')) {
+      resolved.includes('/node_modules/@esbuild/')) {
       return builtinModules['esbuild'];
     }
     if (resolved.includes('/node_modules/prettier/')) {
@@ -880,7 +880,7 @@ export class Runtime {
     this.options = options;
 
     // Initialize child_process with VFS for bash command support
-    initChildProcess(vfs);
+    initChildProcess(vfs, options.env);
 
     // Initialize file watcher shims with VFS
     chokidarShim.setVFS(vfs);
@@ -984,9 +984,9 @@ export class Runtime {
     }
 
     // Parse a stack trace string into structured frames
-    function parseStack(stack: string): Array<{fn: string, file: string, line: number, col: number}> {
+    function parseStack(stack: string): Array<{ fn: string, file: string, line: number, col: number }> {
       if (!stack) return [];
-      const frames: Array<{fn: string, file: string, line: number, col: number}> = [];
+      const frames: Array<{ fn: string, file: string, line: number, col: number }> = [];
       const lines = stack.split('\n');
 
       for (const raw of lines) {
@@ -1021,7 +1021,7 @@ export class Runtime {
     }
 
     // Create a mock CallSite object from a parsed frame
-    function createCallSite(frame: {fn: string, file: string, line: number, col: number}) {
+    function createCallSite(frame: { fn: string, file: string, line: number, col: number }) {
       return {
         getFileName: () => frame.file || null,
         getLineNumber: () => frame.line || null,
@@ -1084,7 +1084,7 @@ export class Runtime {
     });
 
     // Polyfill Error.captureStackTrace
-    (Error as any).captureStackTrace = function(target: any, constructorOpt?: Function) {
+    (Error as any).captureStackTrace = function (target: any, constructorOpt?: Function) {
       // Temporarily clear prepareStackTrace to get the raw stack string
       // (otherwise our .stack getter would call prepareStackTrace recursively)
       const savedPrepare = (Error as any).prepareStackTrace;
@@ -1283,7 +1283,7 @@ ${code}
     // Generator functions preserve their local scope across yields, so
     // var declarations from eval() persist between calls. Direct eval
     // runs in the generator's scope (not global), providing isolation.
-    const GeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;
+    const GeneratorFunction = Object.getPrototypeOf(function* () { }).constructor;
     const replGen = new GeneratorFunction(
       'require',
       'console',
