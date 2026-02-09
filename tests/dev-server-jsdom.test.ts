@@ -133,14 +133,9 @@ button {
       document.documentElement.innerHTML = html;
 
       // Find the HMR script
-      const scripts = document.querySelectorAll('script');
-      let hmrScript: HTMLScriptElement | null = null;
-
-      scripts.forEach((script) => {
-        if (script.textContent?.includes('vite-hmr')) {
-          hmrScript = script;
-        }
-      });
+      const hmrScript = Array.from(document.querySelectorAll('script')).find(
+        (script) => script.textContent?.includes('vite-hmr')
+      );
 
       expect(hmrScript).toBeTruthy();
       expect(hmrScript?.textContent).toContain("vite-hmr");
