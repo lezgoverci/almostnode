@@ -174,6 +174,22 @@ export const posix = {
   format,
 };
 
+// Win32 interface (stub — we always use POSIX, but packages import this)
+export const win32 = {
+  sep: '\\',
+  delimiter: ';',
+  normalize,
+  join,
+  resolve,
+  isAbsolute,
+  dirname,
+  basename,
+  extname,
+  relative,
+  parse,
+  format,
+};
+
 // Default export for CommonJS compatibility
 export default {
   sep,
@@ -189,4 +205,5 @@ export default {
   parse,
   format,
   posix,
+  win32,
 };

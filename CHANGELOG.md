@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.12] - 2026-02-12
+
+### Added
+
+- **Generic bin stubs:** `npm install` now reads each package's `bin` field and creates executable scripts in `/node_modules/.bin/`. CLI tools like `vitest`, `eslint`, `tsc`, etc. work automatically via the `node` command — no custom commands needed.
+- **Streaming `container.run()` API:** Long-running commands support `onStdout`/`onStderr` callbacks and `AbortController` signal for cancellation.
+- **`container.sendInput()`:** Send stdin data to running processes (emits both `data` and `keypress` events for readline compatibility).
+- **Vitest demo with xterm.js:** New `examples/vitest-demo.html` showcasing real vitest execution in the browser with watch mode, syntax-highlighted terminal output, and file editing.
+- **E2E tests for vitest demo:** 5 Playwright tests covering install, test execution, tab switching, failure detection, and watch mode restart.
+- **`rollup` shim:** Stub module so vitest's dependency chain resolves without errors.
+- **`fs.realpathSync.native`:** Added as alias for `realpathSync` (used by vitest internals).
+- **`fs.createReadStream` / `fs.createWriteStream`:** Basic implementations using VirtualFS.
+- **`path.delimiter` and `path.win32`:** Added missing path module properties.
+- **`process.getuid()`, `process.getgid()`, `process.umask()`:** Added missing process methods used by npm packages.
+- **`util.deprecate()`:** Returns the original function with a no-op deprecation warning.
+
+### Changed
+
+- **`Object.defineProperty` patch on `globalThis`:** Forces `configurable: true` for properties defined on `globalThis`, so libraries that define non-configurable globals (like vitest's `__vitest_index__`) can be re-run without errors.
+- **VFS adapter executable mode:** Files in `/node_modules/.bin/` now return `0o755` mode so just-bash treats them as executable.
+- **`Runtime.clearCache()` clears in-place:** Previously created a new empty object, leaving closures referencing the stale cache. Now deletes keys in-place.
+- **Watch mode uses restart pattern:** Vitest caches modules internally (Vite's ModuleRunner), so file changes require a full vitest restart (abort + re-launch) rather than stdin-triggered re-runs.
+
+### Removed
+
+- **Custom vitest command:** Deleted `src/shims/vitest-command.ts` and removed vitest-specific handling from `child_process.ts`. Vitest now runs through the generic bin stub + `node` command like any other CLI tool.
+
 ## [0.2.11] - 2026-02-09
 
 ### Fixed

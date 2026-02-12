@@ -323,10 +323,30 @@ export function createFsShim(vfs: VirtualFS, getCwd?: () => string): FsShim {
     lstat(pathLike: unknown): Promise<Stats> {
       return this.stat(resolvePath(pathLike));
     },
-    readdir(pathLike: unknown): Promise<string[]> {
+    readdir(pathLike: unknown, options?: { withFileTypes?: boolean } | string): Promise<string[] | Dirent[]> {
       return new Promise((resolve, reject) => {
         try {
-          resolve(vfs.readdirSync(resolvePath(pathLike)));
+          const path = resolvePath(pathLike);
+          const entries = vfs.readdirSync(path);
+          const opts = typeof options === 'string' ? {} : options;
+          if (opts?.withFileTypes) {
+            const dirents = entries.map(name => {
+              const entryPath = path.endsWith('/') ? path + name : path + '/' + name;
+              let isDir = false;
+              let isFile = false;
+              try {
+                const stat = vfs.statSync(entryPath);
+                isDir = stat.isDirectory();
+                isFile = stat.isFile();
+              } catch {
+                isFile = true;
+              }
+              return new Dirent(name, isDir, isFile);
+            });
+            resolve(dirents);
+          } else {
+            resolve(entries);
+          }
         } catch (err) {
           reject(err);
         }
@@ -727,9 +747,16 @@ export function createFsShim(vfs: VirtualFS, getCwd?: () => string): FsShim {
       vfs.renameSync(resolvePath(oldPathLike), resolvePath(newPathLike));
     },
 
-    realpathSync(pathLike: unknown): string {
-      return vfs.realpathSync(resolvePath(pathLike));
-    },
+    realpathSync: Object.assign(
+      function realpathSync(pathLike: unknown): string {
+        return vfs.realpathSync(resolvePath(pathLike));
+      },
+      {
+        native(pathLike: unknown): string {
+          return vfs.realpathSync(resolvePath(pathLike));
+        },
+      }
+    ),
 
     accessSync(pathLike: unknown, _mode?: number): void {
       vfs.accessSync(resolvePath(pathLike));
@@ -769,10 +796,35 @@ export function createFsShim(vfs: VirtualFS, getCwd?: () => string): FsShim {
 
     readdir(
       pathLike: unknown,
-      optionsOrCallback?: { withFileTypes?: boolean } | ((err: Error | null, files?: string[]) => void),
-      callback?: (err: Error | null, files?: string[]) => void
+      optionsOrCallback?: { withFileTypes?: boolean } | ((err: Error | null, files?: string[] | Dirent[]) => void),
+      callback?: (err: Error | null, files?: string[] | Dirent[]) => void
     ): void {
-      vfs.readdir(resolvePath(pathLike), optionsOrCallback as { withFileTypes?: boolean }, callback);
+      const cb = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+      const opts = typeof optionsOrCallback === 'function' ? undefined : optionsOrCallback;
+      const path = resolvePath(pathLike);
+      try {
+        const entries = vfs.readdirSync(path);
+        if (opts?.withFileTypes) {
+          const dirents: Dirent[] = entries.map(name => {
+            const entryPath = path.endsWith('/') ? path + name : path + '/' + name;
+            let isDir = false;
+            let isFile = false;
+            try {
+              const stat = vfs.statSync(entryPath);
+              isDir = stat.isDirectory();
+              isFile = stat.isFile();
+            } catch {
+              isFile = true;
+            }
+            return new Dirent(name, isDir, isFile);
+          });
+          cb?.(null, dirents);
+        } else {
+          cb?.(null, entries);
+        }
+      } catch (err) {
+        cb?.(err as Error);
+      }
     },
 
     realpath(pathLike: unknown, callback: (err: Error | null, resolvedPath?: string) => void): void {

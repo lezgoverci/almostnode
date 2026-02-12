@@ -5,6 +5,8 @@
  * in browsers, so we need to use @rollup/browser instead.
  */
 
+import * as acorn from 'acorn';
+
 // Rollup instance loaded from CDN
 let rollupInstance: unknown = null;
 let loadPromise: Promise<unknown> | null = null;
@@ -66,6 +68,21 @@ export interface PluginContext {
   [key: string]: unknown;
 }
 
+// parseAst/parseAstAsync — used by Vite's module system for ESM analysis
+// Uses acorn as the parser (ESTree-compatible, like Rollup's native parser)
+export function parseAst(input: string, options?: { allowReturnOutsideFunction?: boolean; jsx?: boolean }): unknown {
+  return acorn.parse(input, {
+    ecmaVersion: 'latest',
+    sourceType: 'module',
+    allowReturnOutsideFunction: options?.allowReturnOutsideFunction ?? false,
+    locations: true,
+  });
+}
+
+export async function parseAstAsync(input: string, options?: { allowReturnOutsideFunction?: boolean; jsx?: boolean; signal?: AbortSignal }): Promise<unknown> {
+  return parseAst(input, options);
+}
+
 // Stub for native module detection - this prevents the "unsupported platform" error
 export function getPackageBase(): string {
   return '';
@@ -77,4 +94,6 @@ export default {
   rollup,
   watch,
   loadRollup,
+  parseAst,
+  parseAstAsync,
 };
