@@ -45,11 +45,11 @@ let _onForkedChildExit: (() => void) | null = null;
 // all forks share globalThis, so libraries like vitest that define non-configurable
 // properties (e.g. __vitest_index__) need them to be configurable for re-runs.
 const _realDefineProperty = Object.defineProperty;
-Object.defineProperty = function<T>(target: T, key: PropertyKey, descriptor: PropertyDescriptor): T {
+Object.defineProperty = function(target: object, key: PropertyKey, descriptor: PropertyDescriptor): object {
   if (target === globalThis && descriptor && !descriptor.configurable) {
     descriptor = { ...descriptor, configurable: true };
   }
-  return _realDefineProperty.call(Object, target, key, descriptor);
+  return _realDefineProperty.call(Object, target, key, descriptor) as object;
 } as typeof Object.defineProperty;
 
 // Module-level streaming callbacks for long-running commands (e.g. vitest watch)
@@ -83,7 +83,7 @@ export function clearStreamingCallbacks(): void {
 
 // Reference to the currently running node command's process stdin.
 // Used to send stdin input to long-running commands (e.g. vitest watch mode).
-let _activeProcessStdin: { emit: (event: string, data: unknown) => void } | null = null;
+let _activeProcessStdin: { emit: (event: string, ...args: unknown[]) => void } | null = null;
 
 /**
  * Send data to the stdin of the currently running node process.

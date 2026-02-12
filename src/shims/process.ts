@@ -83,6 +83,9 @@ export interface Process {
   eventNames: () => string[];
   setMaxListeners: (n: number) => Process;
   getMaxListeners: () => number;
+  // IPC support (used by child_process.fork)
+  send?: (message: unknown, callback?: (error: Error | null) => void) => boolean;
+  connected?: boolean;
   // Internal debug counter
   _cwdCallCount?: number;
 }
